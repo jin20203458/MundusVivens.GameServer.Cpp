@@ -1,0 +1,8 @@
+{
+  "name": "mundus-vivens-game-server",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "grpc",
+    "protobuf"
+  ]
+}

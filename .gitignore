@@ -1,0 +1,25 @@
+# Visual Studio 임시 폴더 및 캐시
+.vs/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# CMake 빌드 출력 폴더 (가장 중요)
+/out/
+/build/
+CMakePresets.json.user
+
+# 컴파일 결과물 및 라이브러리 파일
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.dll
+*.suo
+*.user
+
+# vcpkg 로컬 다운로드 및 패키지 캐시
+vcpkg_installed/
+.vcpkg-root
