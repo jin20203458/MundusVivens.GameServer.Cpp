@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.15)
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     if(EXISTS "C:/Users/user/vcpkg/scripts/buildsystems/vcpkg.cmake")
         set(CMAKE_TOOLCHAIN_FILE "C:/Users/user/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    elseif(EXISTS "C:/Users/adg01/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "C:/Users/adg01/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
     endif()
 endif()
 
