@@ -26,3 +26,7 @@ CMakeUserPresets.json
 # vcpkg 로컬 다운로드 및 패키지 캐시
 vcpkg_installed/
 .vcpkg-root
+
+# 로컬 전용 개인화 파일 (원격 저장소 제외)
+/README.local.md
+/build_local.ps1
