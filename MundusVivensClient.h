@@ -8,12 +8,20 @@
 
 namespace MundusVivens {
 
+struct DialogueLine {
+    std::string speaker_id;
+    std::string speaker_name;
+    std::string text;
+};
+
 struct DialogueResult {
     std::string task_id;
     bool is_queued = false;
+    bool is_completed = false;
     bool completed_immediately = false;
     std::string dialogue_summary;
     std::vector<std::string> dialogue_lines;
+    std::vector<DialogueLine> structured_lines;
 };
 
 struct AgentStatus {
@@ -32,6 +40,12 @@ public:
     // NPC 간 대화를 트리거합니다.
     // wait_for_completion이 true이면 대화가 끝날 때까지 대기(동기적)하며 결과를 반환합니다.
     DialogueResult TriggerDialogue(const std::string& agent_id_a, const std::string& agent_id_b, bool wait_for_completion = true);
+
+    // 🆕 비동기 대화 트리거 (wait_for_completion = false 호출)
+    DialogueResult TriggerDialogueAsync(const std::string& agent_id_a, const std::string& agent_id_b);
+
+    // 🆕 대화 결과 조회 폴링 API
+    DialogueResult PollDialogueResult(const std::string& task_id);
 
     // 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
     AgentStatus GetAgentStatus(const std::string& agent_id);

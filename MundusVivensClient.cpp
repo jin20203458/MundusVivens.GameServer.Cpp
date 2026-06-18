@@ -37,6 +37,18 @@ namespace MundusVivens {
             for (int i = 0; i < response.dialogue_lines_size(); ++i) {
                 result.dialogue_lines.push_back(response.dialogue_lines(i));
             }
+
+            // 🆕 구조화된 대화 데이터 바인딩 추가
+            for (int i = 0; i < response.structured_lines_size(); ++i) {
+                const auto& proto_line = response.structured_lines(i);
+                DialogueLine line;
+                line.speaker_id = proto_line.speaker_id();
+                line.speaker_name = proto_line.speaker_name();
+                line.text = proto_line.text();
+                result.structured_lines.push_back(line);
+            }
+
+            result.is_completed = response.completed_immediately();
         }
         else {
             std::cerr << "[대화 트리거 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
@@ -146,6 +158,49 @@ namespace MundusVivens {
             out_message = "gRPC 에러 발생: " + status.error_message();
             return false;
         }
+    }
+
+    DialogueResult MundusVivensClient::TriggerDialogueAsync(const std::string& agent_id_a, const std::string& agent_id_b) {
+        return TriggerDialogue(agent_id_a, agent_id_b, false);
+    }
+
+    DialogueResult MundusVivensClient::PollDialogueResult(const std::string& task_id) {
+        mundusvivens::GetDialogueResultRequest request;
+        request.set_task_id(task_id);
+
+        mundusvivens::GetDialogueResultResponse response;
+        grpc::ClientContext context;
+
+        grpc::Status status = stub_->GetDialogueResult(&context, request, &response);
+
+        DialogueResult result;
+        result.task_id = task_id;
+        if (status.ok()) {
+            result.is_completed = response.is_completed();
+            result.dialogue_summary = response.dialogue_summary();
+            
+            if (result.is_completed) {
+                // 구조화된 대화 데이터 바인딩
+                for (int i = 0; i < response.lines_size(); ++i) {
+                    const auto& proto_line = response.lines(i);
+                    DialogueLine line;
+                    line.speaker_id = proto_line.speaker_id();
+                    line.speaker_name = proto_line.speaker_name();
+                    line.text = proto_line.text();
+                    result.structured_lines.push_back(line);
+
+                    // 하위 호환성을 위해 텍스트 리스트 형태로도 채워줌
+                    result.dialogue_lines.push_back(proto_line.speaker_name() + ": " + proto_line.text());
+                }
+            }
+        }
+        else {
+            std::cerr << "[대화 결과 조회 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
+            result.is_completed = true; // 에러 발생 시 무한 루프 방지 위해 완료 처리
+            result.dialogue_summary = "gRPC 에러 발생: " + status.error_message();
+        }
+
+        return result;
     }
 
 } // namespace MundusVivens

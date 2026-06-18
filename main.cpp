@@ -37,6 +37,24 @@ std::map<std::string, std::string> CurrentActivities = {
 // (Key: 알파벳 순으로 정렬된 두 NPC ID를 ":"로 병합한 문자열, Value: 다시 대화가 가능해지는 시점의 틱 넘버)
 std::map<std::string, int> DialogueCooldowns;
 
+// 🆕 비동기 진행 중인 대화 트래킹을 위한 구조체
+struct PendingDialogue {
+    std::string task_id;
+    std::string npc_a_id;
+    std::string npc_b_id;
+    int triggered_tick;
+};
+
+// 🆕 대화 중인 NPC 식별 헬퍼 함수
+bool IsNpcBusy(const std::string& npc_id, const std::vector<PendingDialogue>& pendings) {
+    for (const auto& pd : pendings) {
+        if (pd.npc_a_id == npc_id || pd.npc_b_id == npc_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // 정렬된 복합 키를 생성해 주는 헬퍼 함수 (중복 등록 방지용)
 std::string GetCooldownKey(const std::string& a, const std::string& b) {
     std::string first = a;
@@ -130,13 +148,61 @@ int main() {
         }
 
         // -------------------------------------------------------------
-        // 3. 동일 공간 인접 검사(Overlap Detection) 및 대화 트리거 연산
+        // 3. [Phase 2] 비동기 대화 결과 수거 (Polling)
         // -------------------------------------------------------------
-        // 2중 루프 조합 연산을 통해 3명의 NPC 중 겹치지 않는 2인 조 조합 생성
+        static std::vector<PendingDialogue> pendingDialogues;
+        for (auto it = pendingDialogues.begin(); it != pendingDialogues.end(); ) {
+            auto result = client.PollDialogueResult(it->task_id);
+            if (result.is_completed) {
+                std::cout << "\n🔔 [비동기 대화 완료 수신] " << NpcNames[it->npc_a_id] << "와(과) " << NpcNames[it->npc_b_id] << "의 대화 완료!" << std::endl;
+                
+                if (result.dialogue_lines.empty()) {
+                    std::cerr << "❌ [대화 데이터 에러] 대화 수거에 성공했으나 대사 텍스트가 비어있습니다. 에러 요약: " << result.dialogue_summary << std::endl;
+                } else {
+                    std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
+                    std::cout << result.dialogue_summary << std::endl;
+                    std::cout << "==============================================================" << std::endl;
+
+                    std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
+                    for (const auto& line : result.dialogue_lines) {
+                        std::cout << line << std::endl;
+                    }
+                    std::cout << "==============================================================\n" << std::endl;
+                }
+
+                // C++ 내부 행동 상태 갱신
+                CurrentActivities[it->npc_a_id] = "대화 마침";
+                CurrentActivities[it->npc_b_id] = "대화 마침";
+
+                // 대화 마침 상태를 C# AI 서버에도 즉시 역동기화하여 대화 종료 상태 반영
+                std::string status_msg;
+                client.UpdateAgentStatus(it->npc_a_id, CurrentLocations[it->npc_a_id], "평온함", CurrentActivities[it->npc_a_id], status_msg);
+                client.UpdateAgentStatus(it->npc_b_id, CurrentLocations[it->npc_b_id], "평온함", CurrentActivities[it->npc_b_id], status_msg);
+
+                // 무한 수다 방지를 위해 해당 조에게 5틱(25초) 동안 대화 금지 쿨다운 가중치 등록
+                std::string cooldown_key = GetCooldownKey(it->npc_a_id, it->npc_b_id);
+                DialogueCooldowns[cooldown_key] = tick + 5;
+
+                // pending 목록에서 제거
+                it = pendingDialogues.erase(it);
+            } else {
+                std::cout << "⏳ [대화 진행 중] Job " << it->task_id << " (" << NpcNames[it->npc_a_id] << " <-> " << NpcNames[it->npc_b_id] << ") 연산 대기 중..." << std::endl;
+                ++it;
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 4. [Phase 3] 동일 공간 인접 검사 및 새 대화 비동기 트리거 (Fire-and-Forget)
+        // -------------------------------------------------------------
         for (size_t i = 0; i < NpcIds.size(); ++i) {
             for (size_t j = i + 1; j < NpcIds.size(); ++j) {
                 std::string npcA = NpcIds[i];
                 std::string npcB = NpcIds[j];
+
+                // 이미 둘 중 하나라도 대화 진행 중(Pending)이면 트리거 대상에서 제외
+                if (IsNpcBusy(npcA, pendingDialogues) || IsNpcBusy(npcB, pendingDialogues)) {
+                    continue;
+                }
 
                 // 관문 1: 두 NPC가 물리적으로 완전히 동일한 장소에 서 있는가?
                 if (CurrentLocations[npcA] == CurrentLocations[npcB]) {
@@ -144,38 +210,30 @@ int main() {
 
                     // 관문 2: 대화 재발동 쿨다운 제한 시간이 풀렸는가?
                     if (DialogueCooldowns.find(cooldown_key) != DialogueCooldowns.end() && tick < DialogueCooldowns[cooldown_key]) {
-                        continue; // 아직 쿨다운 페널티가 남아있으므로 무시
+                        continue;
                     }
 
                     // 관문 3: 조건을 충족했을 때 최종 50%의 대화 발동 주사위 확률이 터졌는가?
                     if (dis(gen) < 0.5) {
                         std::cout << "\n💬 [C++ 공간 충돌 감지] " << NpcNames[npcA] << "와(과) " << NpcNames[npcB] << "이(가) [" << CurrentLocations[npcA] << "] 공간에서 마주쳤습니다!" << std::endl;
-                        std::cout << "💬 gRPC 통신으로 C# AI 서버의 대화 시뮬레이션 엔진을 강제 구동합니다..." << std::endl;
+                        std::cout << "💬 비동기 gRPC 통신으로 대화 트리거를 요청합니다 (Fire-and-Forget)..." << std::endl;
 
-                        //  [동기식 블락킹 호출] C# 서버가 LLM(Gemini) 연산을 다 마칠 때까지 스레드 일시 대기
-                        auto result = client.TriggerDialogue(npcA, npcB, true);
+                        // 비동기 트리거 호출
+                        auto result = client.TriggerDialogueAsync(npcA, npcB);
+                        if (result.is_queued) {
+                            std::cout << "🚀 대화가 대기열에 성공적으로 등록되었습니다. Job ID: " << result.task_id << std::endl;
+                            pendingDialogues.push_back({ result.task_id, npcA, npcB, tick });
 
-                        if (result.dialogue_lines.empty()) {
-                            std::cerr << "❌ [대화 데이터 에러] 대화 트리거는 성공했으나 반환된 대사 텍스트가 비어있습니다." << std::endl;
-                        }
-                        else {
-                            // 통신 성공 및 AI 대사 수신 정산 결과 출력
-                            std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
-                            std::cout << result.dialogue_summary << std::endl;
-                            std::cout << "==============================================================" << std::endl;
+                            // C++ 내부 행동 상태 갱신
+                            CurrentActivities[npcA] = NpcNames[npcB] + "와(과) 대화 중";
+                            CurrentActivities[npcB] = NpcNames[npcA] + "와(과) 대화 중";
 
-                            std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
-                            for (const auto& line : result.dialogue_lines) {
-                                std::cout << line << std::endl;
-                            }
-                            std::cout << "==============================================================\n" << std::endl;
-
-                            // 대화를 마쳤으므로 물리 행동 상태 문자열 갱신
-                            CurrentActivities[npcA] = "대화 마침";
-                            CurrentActivities[npcB] = "대화 마침";
-
-                            // 무한 수다 방지를 위해 해당 조에게 5틱(25초) 동안 대화 금지 쿨다운 가중치 등록
-                            DialogueCooldowns[cooldown_key] = tick + 5;
+                            // 대화 중 상태를 C# AI 서버에도 역동기화
+                            std::string status_msg;
+                            client.UpdateAgentStatus(npcA, CurrentLocations[npcA], "평온함", CurrentActivities[npcA], status_msg);
+                            client.UpdateAgentStatus(npcB, CurrentLocations[npcB], "평온함", CurrentActivities[npcB], status_msg);
+                        } else {
+                            std::cerr << "❌ [대화 요청 실패] 대화가 큐에 등록되지 못했습니다." << std::endl;
                         }
                     }
                 }
