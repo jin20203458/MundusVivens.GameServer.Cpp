@@ -4,124 +4,148 @@
 
 namespace MundusVivens {
 
-MundusVivensClient::MundusVivensClient(const std::string& server_address) {
-    // Kestrel gRPC 서버의 로컬 통신을 위해 보안 토큰이 없는 비보안 채널을 엽니다.
-    auto channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
-    stub_ = mundusvivens::MundusVivensGrpc::NewStub(channel);
-}
+    MundusVivensClient::MundusVivensClient(const std::string& server_address) {
+        // Kestrel gRPC 서버와의 로컬 통신을 위해 보안 인증서가 없는 비보안(Insecure) 채널을 개설합니다.
+        auto channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
 
-DialogueResult MundusVivensClient::TriggerDialogue(const std::string& agent_id_a, const std::string& agent_id_b, bool wait_for_completion) {
-    mundusvivens::TriggerDialogueRequest request;
-    request.set_agent_id_a(agent_id_a);
-    request.set_agent_id_b(agent_id_b);
-    request.set_wait_for_completion(wait_for_completion);
+        // 프로토콜 버퍼로 자동 생성된 인프라 스텁(Stub) 인스턴스를 생성하여 멤버 변수에 바인딩합니다.
+        stub_ = mundusvivens::MundusVivensGrpc::NewStub(channel);
+    }
 
-    mundusvivens::TriggerDialogueResponse response;
-    grpc::ClientContext context;
+    DialogueResult MundusVivensClient::TriggerDialogue(const std::string& agent_id_a, const std::string& agent_id_b, bool wait_for_completion) {
+        // 1. 원격 서버로 송신할 요청(Request) 패킷 데이터 설정
+        mundusvivens::TriggerDialogueRequest request;
+        request.set_agent_id_a(agent_id_a);
+        request.set_agent_id_b(agent_id_b);
+        request.set_wait_for_completion(wait_for_completion);
 
-    grpc::Status status = stub_->TriggerDialogue(&context, request, &response);
+        mundusvivens::TriggerDialogueResponse response;
+        grpc::ClientContext context; // RPC 호출의 타임아웃, 메타데이터 등을 관리하는 컨텍스트 객체
 
-    DialogueResult result;
-    if (status.ok()) {
-        result.task_id = response.task_id();
-        result.is_queued = response.is_queued();
-        result.completed_immediately = response.completed_immediately();
-        result.dialogue_summary = response.dialogue_summary();
-        
-        for (int i = 0; i < response.dialogue_lines_size(); ++i) {
-            result.dialogue_lines.push_back(response.dialogue_lines(i));
+        // 2. 스텁 포인터를 통해 C# 서버의 원격 함수를 호출 (네트워크 송수신 발생)
+        grpc::Status status = stub_->TriggerDialogue(&context, request, &response);
+
+        // 3. 수신된 바이너리 패킷을 C++ 전용 구조체(DialogueResult)로 복사 및 반환
+        DialogueResult result;
+        if (status.ok()) {
+            result.task_id = response.task_id();
+            result.is_queued = response.is_queued();
+            result.completed_immediately = response.completed_immediately();
+            result.dialogue_summary = response.dialogue_summary();
+
+            // protobuf가 뱉은 가변 배열(Repeated Field) 요소를 C++ std::vector에 순차적으로 밀어 넣음
+            for (int i = 0; i < response.dialogue_lines_size(); ++i) {
+                result.dialogue_lines.push_back(response.dialogue_lines(i));
+            }
         }
-    } else {
-        std::cerr << "TriggerDialogue gRPC Error: " << status.error_message() << std::endl;
-        result.dialogue_summary = "gRPC 에러 발생: " + status.error_message();
-    }
-
-    return result;
-}
-
-AgentStatus MundusVivensClient::GetAgentStatus(const std::string& agent_id) {
-    mundusvivens::GetAgentStatusRequest request;
-    request.set_agent_id(agent_id);
-
-    mundusvivens::GetAgentStatusResponse response;
-    grpc::ClientContext context;
-
-    grpc::Status status = stub_->GetAgentStatus(&context, request, &response);
-
-    AgentStatus result;
-    if (status.ok()) {
-        result.name = response.name();
-        result.location = response.location();
-        result.emotion = response.emotion();
-        result.activity = response.activity();
-        
-        for (int i = 0; i < response.memories_size(); ++i) {
-            result.memories.push_back(response.memories(i));
+        else {
+            std::cerr << "[대화 트리거 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
+            result.dialogue_summary = "gRPC 에러 발생: " + status.error_message();
         }
-    } else {
-        std::cerr << "GetAgentStatus gRPC Error: " << status.error_message() << std::endl;
+
+        return result;
     }
 
-    return result;
-}
+    AgentStatus MundusVivensClient::GetAgentStatus(const std::string& agent_id) {
+        // 1. 특정 에이전트 식별자(ID)를 요청 패킷에 세팅
+        mundusvivens::GetAgentStatusRequest request;
+        request.set_agent_id(agent_id);
 
-bool MundusVivensClient::InjectGossip(const std::string& target_agent_id, const std::string& subject_id, const std::string& content, std::string& out_message) {
-    mundusvivens::InjectGossipRequest request;
-    request.set_target_agent_id(target_agent_id);
-    request.set_subject_id(subject_id);
-    request.set_content(content);
+        mundusvivens::GetAgentStatusResponse response;
+        grpc::ClientContext context;
 
-    mundusvivens::InjectGossipResponse response;
-    grpc::ClientContext context;
+        // 2. C# 서버로부터 해당 에이전트의 상태 데이터를 긁어옴
+        grpc::Status status = stub_->GetAgentStatus(&context, request, &response);
 
-    grpc::Status status = stub_->InjectGossip(&context, request, &response);
+        // 3. 수신 데이터를 C++용 상용 구조체(AgentStatus)로 매핑
+        AgentStatus result;
+        if (status.ok()) {
+            result.name = response.name();
+            result.location = response.location();
+            result.emotion = response.emotion();
+            result.activity = response.activity();
 
-    if (status.ok()) {
-        out_message = response.message();
-        return response.success();
-    } else {
-        out_message = "gRPC Error: " + status.error_message();
-        return false;
+            // 에피소드 기억 목록을 std::vector에 누적
+            for (int i = 0; i < response.memories_size(); ++i) {
+                result.memories.push_back(response.memories(i));
+            }
+        }
+        else {
+            std::cerr << "[상태 조회 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
+        }
+
+        return result;
     }
-}
 
-bool MundusVivensClient::UpdateAgentStatus(const std::string& agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message) {
-    mundusvivens::UpdateAgentStatusRequest request;
-    request.set_agent_id(agent_id);
-    request.set_location(location);
-    request.set_emotion(emotion);
-    request.set_activity(activity);
+    bool MundusVivensClient::InjectGossip(const std::string& target_agent_id, const std::string& subject_id, const std::string& content, std::string& out_message) {
+        // 1. 소문을 주입할 대상 NPC, 소문의 주인공, 소문 내용 패킷 세팅
+        mundusvivens::InjectGossipRequest request;
+        request.set_target_agent_id(target_agent_id);
+        request.set_subject_id(subject_id);
+        request.set_content(content);
 
-    mundusvivens::UpdateAgentStatusResponse response;
-    grpc::ClientContext context;
+        mundusvivens::InjectGossipResponse response;
+        grpc::ClientContext context;
 
-    grpc::Status status = stub_->UpdateAgentStatus(&context, request, &response);
+        // 2. C# AI 세계관 내부로 소문 데이터를 강제 주입 지시
+        grpc::Status status = stub_->InjectGossip(&context, request, &response);
 
-    if (status.ok()) {
-        out_message = response.message();
-        return response.success();
-    } else {
-        out_message = "gRPC Error: " + status.error_message();
-        return false;
+        // 3. 통신 상태 및 비즈니스 로직 처리 결과 반환
+        if (status.ok()) {
+            out_message = response.message(); // 서버 측 처리 결과 메시지 바인딩
+            return response.success();        // 주입 성공 여부 (true/false)
+        }
+        else {
+            out_message = "gRPC 에러 발생: " + status.error_message();
+            return false;
+        }
     }
-}
 
-bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message) {
-    mundusvivens::ProcessWorldTickRequest request;
-    request.set_tick_number(tick_number);
+    bool MundusVivensClient::UpdateAgentStatus(const std::string& agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message) {
+        // 1. C++ 게임 월드에서 결정된 NPC의 최신 상태(위치, 감정, 현재 행동)를 패킷에 세팅
+        mundusvivens::UpdateAgentStatusRequest request;
+        request.set_agent_id(agent_id);
+        request.set_location(location);
+        request.set_emotion(emotion);
+        request.set_activity(activity);
 
-    mundusvivens::ProcessWorldTickResponse response;
-    grpc::ClientContext context;
+        mundusvivens::UpdateAgentStatusResponse response;
+        grpc::ClientContext context;
 
-    grpc::Status status = stub_->ProcessWorldTick(&context, request, &response);
+        // 2. AI 서버 측의 에이전트 인스턴스 인메모리 데이터를 물리 월드 상태와 동기화
+        grpc::Status status = stub_->UpdateAgentStatus(&context, request, &response);
 
-    if (status.ok()) {
-        out_message = response.message();
-        return response.success();
-    } else {
-        out_message = "gRPC Error: " + status.error_message();
-        return false;
+        // 3. 동기화 성공 여부 정산
+        if (status.ok()) {
+            out_message = response.message();
+            return response.success();
+        }
+        else {
+            out_message = "gRPC 에러 발생: " + status.error_message();
+            return false;
+        }
     }
-}
+
+    bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message) {
+        // 1. C++ 메인 루프에서 전진한 현재의 월드 틱 넘버를 패킷에 세팅
+        mundusvivens::ProcessWorldTickRequest request;
+        request.set_tick_number(tick_number);
+
+        mundusvivens::ProcessWorldTickResponse response;
+        grpc::ClientContext context;
+
+        // 2. AI 서버에 글로벌 시간(Tick) 동기화 신호를 전송
+        grpc::Status status = stub_->ProcessWorldTick(&context, request, &response);
+
+        // 3. 시간 동기화 완료 여부 반환
+        if (status.ok()) {
+            out_message = response.message();
+            return response.success();
+        }
+        else {
+            out_message = "gRPC 에러 발생: " + status.error_message();
+            return false;
+        }
+    }
 
 } // namespace MundusVivens
