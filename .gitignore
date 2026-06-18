@@ -5,10 +5,13 @@
 x64/
 x86/
 
-# CMake 빌드 출력 폴더 (가장 중요)
+# CMake 빌드 출력 폴더 및 캐시 파일
 /out/
 /build/
+CMakeFiles/
+CMakeCache.txt
 CMakePresets.json.user
+CMakeUserPresets.json
 
 # 컴파일 결과물 및 라이브러리 파일
 *.exe
