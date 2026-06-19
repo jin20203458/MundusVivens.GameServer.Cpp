@@ -21,6 +21,7 @@ service MundusVivensGrpc {
   rpc StartPlayerDialogue (StartPlayerDialogueRequest) returns (StartPlayerDialogueResponse);
   rpc SendPlayerMessage (SendPlayerMessageRequest) returns (SendPlayerMessageResponse);
   rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
+  rpc GetWorldBootstrap (GetWorldBootstrapRequest) returns (GetWorldBootstrapResponse);
 }
 
 message TriggerDialogueRequest {
@@ -187,4 +188,19 @@ message EndPlayerDialogueRequest {
 message EndPlayerDialogueResponse {
   bool success = 1;
   string summary = 2;
+}
+
+message GetWorldBootstrapRequest { }
+
+message InitialAgentState {
+  string agent_id = 1;
+  string name = 2;
+  string location = 3;
+  string emotion = 4;
+  string activity = 5;
+}
+
+message GetWorldBootstrapResponse {
+  repeated string locations = 1;
+  repeated InitialAgentState agents = 2;
 }

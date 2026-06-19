@@ -196,10 +196,40 @@ namespace MundusVivens {
         }
         else {
             std::cerr << "[대화 결과 조회 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
-            result.is_completed = true; // 에러 발생 시 무한 루프 방지 위해 완료 처리
+            result.is_completed = false; // 에러 발생 시 타임아웃 처리를 위해 완료 처리 지연
+            result.has_error = true;     // 🆕 에러 상태 플래그 설정
             result.dialogue_summary = "gRPC 에러 발생: " + status.error_message();
         }
 
+        return result;
+    }
+
+    WorldBootstrapData MundusVivensClient::GetWorldBootstrap() {
+        mundusvivens::GetWorldBootstrapRequest request;
+        mundusvivens::GetWorldBootstrapResponse response;
+        grpc::ClientContext context;
+
+        grpc::Status status = stub_->GetWorldBootstrap(&context, request, &response);
+
+        WorldBootstrapData result;
+        if (status.ok()) {
+            for (int i = 0; i < response.locations_size(); ++i) {
+                result.locations.push_back(response.locations(i));
+            }
+            for (int i = 0; i < response.agents_size(); ++i) {
+                const auto& proto_agent = response.agents(i);
+                InitialAgentState agent;
+                agent.agent_id = proto_agent.agent_id();
+                agent.name = proto_agent.name();
+                agent.location = proto_agent.location();
+                agent.emotion = proto_agent.emotion();
+                agent.activity = proto_agent.activity();
+                result.agents.push_back(agent);
+            }
+        }
+        else {
+            std::cerr << "[부트스트랩 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
+        }
         return result;
     }
 

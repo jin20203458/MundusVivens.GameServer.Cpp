@@ -22,6 +22,20 @@ struct DialogueResult {
     std::string dialogue_summary;
     std::vector<std::string> dialogue_lines;
     std::vector<DialogueLine> structured_lines;
+    bool has_error = false; // 🆕 통신 장애 발생 플래그
+};
+
+struct InitialAgentState {
+    std::string agent_id;
+    std::string name;
+    std::string location;
+    std::string emotion;
+    std::string activity;
+};
+
+struct WorldBootstrapData {
+    std::vector<std::string> locations;
+    std::vector<InitialAgentState> agents;
 };
 
 struct AgentStatus {
@@ -58,6 +72,9 @@ public:
 
     // C++ 게임 서버의 틱(시간 흐름) 진행을 C# AI 서버에 알립니다.
     bool ProcessWorldTick(int32_t tick_number, std::string& out_message);
+
+    // 🆕 월드 부트스트랩 데이터 조회
+    WorldBootstrapData GetWorldBootstrap();
 
 private:
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;
