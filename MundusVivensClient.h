@@ -14,6 +14,11 @@ struct DialogueLine {
     std::string text;
 };
 
+struct AgentEmotionUpdate {
+    std::string agent_id;
+    std::string new_emotion;
+};
+
 struct DialogueResult {
     std::string task_id;
     bool is_queued = false;
@@ -22,6 +27,7 @@ struct DialogueResult {
     std::string dialogue_summary;
     std::vector<std::string> dialogue_lines;
     std::vector<DialogueLine> structured_lines;
+    std::vector<AgentEmotionUpdate> emotion_updates; // 🆕 대화에 의한 감정 변동 리스트
     bool has_error = false; // 🆕 통신 장애 발생 플래그
 };
 
@@ -36,6 +42,18 @@ struct InitialAgentState {
 struct WorldBootstrapData {
     std::vector<std::string> locations;
     std::vector<InitialAgentState> agents;
+};
+
+struct DailyScheduleItem {
+    int32_t start_hour = 0;
+    int32_t end_hour = 0;
+    std::string target_location;
+    std::string activity;
+};
+
+struct DailySchedule {
+    std::string agent_id;
+    std::vector<DailyScheduleItem> items;
 };
 
 struct AgentStatus {
@@ -75,6 +93,9 @@ public:
 
     // 🆕 월드 부트스트랩 데이터 조회
     WorldBootstrapData GetWorldBootstrap();
+
+    // 🆕 일일 스케줄 데이터 조회 RPC
+    std::vector<DailySchedule> GetDailySchedules(int32_t current_tick);
 
 private:
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;

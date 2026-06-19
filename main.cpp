@@ -38,6 +38,12 @@ std::map<std::string, std::string> CurrentEmotions;
 // (Key: 알파벳 순으로 정렬된 두 NPC ID를 ":"로 병합한 문자열, Value: 다시 대화가 가능해지는 시점의 틱 넘버)
 std::map<std::string, int> DialogueCooldowns;
 
+// 🆕 NPC별 일일 스케줄 저장 테이블
+std::vector<MundusVivens::DailySchedule> DailySchedules;
+
+// 🆕 NPC별 일일 대화 횟수 추적 테이블
+std::map<std::string, int> DailyDialogueCounts;
+
 //  비동기 진행 중인 대화 트래킹을 위한 구조체
 struct PendingDialogue {
     std::string task_id;
@@ -65,6 +71,20 @@ std::string GetCooldownKey(const std::string& a, const std::string& b) {
         std::swap(first, second);
     }
     return first + ":" + second;
+}
+
+// 🆕 NPC가 현재 진행 중인 활동(Activity)에 집중하여 대화를 피할 확률을 계산하는 헬퍼 함수
+bool IsNPCFocusedOnActivity(const std::string& npc_id, const std::string& activity, double roll) {
+    if (activity.find("취침") != std::string::npos || activity.find("휴식") != std::string::npos) {
+        // 취침/휴식 중에는 대화 불가
+        return true;
+    }
+    if (activity.find("기도") != std::string::npos || activity.find("명상") != std::string::npos) {
+        // 기도/명상 중에는 80% 확률로 대화 불가
+        return roll < 0.8;
+    }
+    // 그 외 활동 시에는 30% 확률로 몰입하여 대화 거부
+    return roll < 0.3;
 }
 
 int main() {
@@ -147,8 +167,21 @@ int main() {
             continue; // 통신 장애 시 이번 틱의 물리 이동/대화 연산은 건너뛰고 재시도
         }
 
+        // 🆕 매일 아침(0시/0틱) 감지: 대화 제한 횟수 초기화 및 일일 스케줄 데이터 조회
+        if (DailySchedules.empty() || target_tick % 24 == 0) {
+            DailyDialogueCounts.clear();
+            std::cout << "☀️ [새로운 하루 시작] NPC들의 일일 대화 제한 횟수 초기화 및 일일 스케줄 데이터 조회 중..." << std::endl;
+            auto schedules = client.GetDailySchedules(target_tick);
+            if (!schedules.empty()) {
+                DailySchedules = schedules;
+                std::cout << "[C++ 서버] 일일 스케줄 갱신 완료 (대상 NPC 수: " << DailySchedules.size() << ")" << std::endl;
+            } else {
+                std::cerr << "⚠️ [스케줄 에러] 일일 스케줄을 가져오지 못했습니다. 기존 스케줄 혹은 기본값을 유지합니다." << std::endl;
+            }
+        }
+
         // -------------------------------------------------------------
-        // 2. 각 NPC들의 무작위 물리 이동 시뮬레이션 및 역동기화
+        // 2. 각 NPC들의 스케줄 기반 이동 시뮬레이션 및 역동기화
         // -------------------------------------------------------------
         for (const auto& npc_id : NpcIds) {
             // [이슈 3] 대화 중인 NPC는 이동 대상에서 원천 배제
@@ -159,42 +192,43 @@ int main() {
                 continue;
             }
 
-            // 30%의 확률로 다른 장소로 이동 결정
-            if (dis(gen) < 0.3) {
-                std::string old_loc = CurrentLocations[npc_id];
-                std::string new_loc = Locations[loc_dis(gen)]; // 무작위 새 장소 추출
+            // 스케줄에서 현재 시간의 목적지와 행동 조회
+            std::string target_location = CurrentLocations[npc_id];
+            std::string scheduled_activity = CurrentActivities[npc_id];
+            bool found_schedule = false;
 
-                if (new_loc == old_loc) {
-                    // 같은 장소면 실제 이동을 건너뛰고 잔류 처리
-                    std::cout << "🧍 [위치 잔류] " << NpcNames[npc_id] << " 위치 유지: [" << CurrentLocations[npc_id] << "] (현재 행동: " << CurrentActivities[npc_id] << ")" << std::endl;
-                    std::string status_msg;
-                    client.UpdateAgentStatus(npc_id, CurrentLocations[npc_id], CurrentEmotions[npc_id], CurrentActivities[npc_id], status_msg);
-                    continue;
+            int current_hour = target_tick % 24;
+            for (const auto& ds : DailySchedules) {
+                if (ds.agent_id == npc_id) {
+                    for (const auto& item : ds.items) {
+                        if (item.start_hour <= current_hour && current_hour <= item.end_hour) {
+                            target_location = item.target_location;
+                            scheduled_activity = item.activity;
+                            found_schedule = true;
+                            break;
+                        }
+                    }
+                    break;
                 }
-
-                CurrentLocations[npc_id] = new_loc;
-
-                // 새로 도착한 장소의 특성에 맞춰 기본 행동(Activity) 문자열 가공
-                if (new_loc.find("Church") != std::string::npos) {
-                    CurrentActivities[npc_id] = "예배 참여 및 침묵 명상";
-                }
-                else if (new_loc.find("Tavern") != std::string::npos) {
-                    CurrentActivities[npc_id] = "술집 테이블 정리 및 잡담";
-                }
-                else {
-                    CurrentActivities[npc_id] = "광장 게시판 구경";
-                }
-
-                std::cout << "🏃 [공간 이동] " << NpcNames[npc_id] << " 이동함: [" << old_loc << "] ➔ [" << new_loc << "] (현재 행동: " << CurrentActivities[npc_id] << ")" << std::endl;
             }
-            else {
-                // 70% 확률로 기존 위치에 잔류
+
+            std::string old_loc = CurrentLocations[npc_id];
+            if (found_schedule) {
+                CurrentLocations[npc_id] = target_location;
+                CurrentActivities[npc_id] = scheduled_activity;
+
+                if (target_location != old_loc) {
+                    std::cout << "🏃 [스케줄 이동] " << NpcNames[npc_id] << " 이동함: [" << old_loc << "] ➔ [" << target_location << "] (행동: " << scheduled_activity << ")" << std::endl;
+                } else {
+                    std::cout << "🧍 [스케줄 유지] " << NpcNames[npc_id] << " 위치 유지: [" << target_location << "] (행동: " << scheduled_activity << ")" << std::endl;
+                }
+            } else {
+                // 스케줄이 없을 경우 기존의 기본 잔류 처리
                 std::cout << "🧍 [위치 잔류] " << NpcNames[npc_id] << " 위치 유지: [" << CurrentLocations[npc_id] << "] (현재 행동: " << CurrentActivities[npc_id] << ")" << std::endl;
             }
 
             // C++ 월드에서 가공된 NPC의 최신 물리 상태를 C# AI 인메모리 객체로 역동기화 (패킷 송신)
             std::string status_msg;
-            // [이슈 2] "평온함" 하드코딩 제거 → CurrentEmotions 맵 참조
             client.UpdateAgentStatus(npc_id, CurrentLocations[npc_id], CurrentEmotions[npc_id], CurrentActivities[npc_id], status_msg);
         }
 
@@ -250,6 +284,14 @@ int main() {
                     std::cout << "==============================================================\n" << std::endl;
                 }
 
+                // 🆕 C++ 내부 감정 상태 갱신 (대화 분석 결과 반영)
+                for (const auto& em_update : result.emotion_updates) {
+                    if (CurrentEmotions.find(em_update.agent_id) != CurrentEmotions.end()) {
+                        CurrentEmotions[em_update.agent_id] = em_update.new_emotion;
+                        std::cout << "🎭 [감정 동기화] " << NpcNames[em_update.agent_id] << "의 감정이 [" << em_update.new_emotion << "](으)로 업데이트되었습니다." << std::endl;
+                    }
+                }
+
                 // C++ 내부 행동 상태 갱신
                 CurrentActivities[it->npc_a_id] = "대화 마침";
                 CurrentActivities[it->npc_b_id] = "대화 마침";
@@ -294,6 +336,28 @@ int main() {
                         continue;
                     }
 
+                    // 🆕 관문 2.5: 일일 대화 제한 횟수가 초과되었는가? (NPC당 하루 최대 3회)
+                    if (DailyDialogueCounts[npcA] >= 3) {
+                        std::cout << "⏳ [대화 억제] " << NpcNames[npcA] << "은(는) 오늘 이미 " << DailyDialogueCounts[npcA] << "번 대화하여 더 이상의 대화를 거절합니다." << std::endl;
+                        continue;
+                    }
+                    if (DailyDialogueCounts[npcB] >= 3) {
+                        std::cout << "⏳ [대화 억제] " << NpcNames[npcB] << "은(는) 오늘 이미 " << DailyDialogueCounts[npcB] << "번 대화하여 더 이상의 대화를 거절합니다." << std::endl;
+                        continue;
+                    }
+
+                    // 🆕 관문 2.6: 현재 활동(Activity)에 집중/몰입하고 있는가?
+                    double rollA = dis(gen);
+                    double rollB = dis(gen);
+                    if (IsNPCFocusedOnActivity(npcA, CurrentActivities[npcA], rollA)) {
+                        std::cout << "⏳ [대화 억제] " << NpcNames[npcA] << "은(는) 현재 활동(\"" << CurrentActivities[npcA] << "\")에 몰입해 대화를 나누지 못합니다." << std::endl;
+                        continue;
+                    }
+                    if (IsNPCFocusedOnActivity(npcB, CurrentActivities[npcB], rollB)) {
+                        std::cout << "⏳ [대화 억제] " << NpcNames[npcB] << "은(는) 현재 활동(\"" << CurrentActivities[npcB] << "\")에 몰입해 대화를 나누지 못합니다." << std::endl;
+                        continue;
+                    }
+
                     // 관문 3: 조건을 충족했을 때 최종 50%의 대화 발동 주사위 확률이 터졌는가?
                     if (dis(gen) < 0.5) {
                         std::cout << "\n💬 [C++ 공간 충돌 감지] " << NpcNames[npcA] << "와(과) " << NpcNames[npcB] << "이(가) [" << CurrentLocations[npcA] << "] 공간에서 마주쳤습니다!" << std::endl;
@@ -305,6 +369,10 @@ int main() {
                             std::cout << "🚀 대화가 대기열에 성공적으로 등록되었습니다. Job ID: " << result.task_id << std::endl;
                             // [이슈 4] 대화 시작 위치 저장
                             pendingDialogues.push_back({ result.task_id, npcA, npcB, tick, CurrentLocations[npcA] });
+
+                            // 🆕 일일 대화 횟수 증가
+                            DailyDialogueCounts[npcA]++;
+                            DailyDialogueCounts[npcB]++;
 
                             // C++ 내부 행동 상태 갱신
                             CurrentActivities[npcA] = NpcNames[npcB] + "와(과) 대화 중";

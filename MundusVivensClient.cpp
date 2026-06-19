@@ -48,6 +48,15 @@ namespace MundusVivens {
                 result.structured_lines.push_back(line);
             }
 
+            // 🆕 감정 업데이트 정보 바인딩
+            for (int i = 0; i < response.emotion_updates_size(); ++i) {
+                const auto& proto_update = response.emotion_updates(i);
+                AgentEmotionUpdate update;
+                update.agent_id = proto_update.agent_id();
+                update.new_emotion = proto_update.new_emotion();
+                result.emotion_updates.push_back(update);
+            }
+
             result.is_completed = response.completed_immediately();
         }
         else {
@@ -192,6 +201,15 @@ namespace MundusVivens {
                     // 하위 호환성을 위해 텍스트 리스트 형태로도 채워줌
                     result.dialogue_lines.push_back(proto_line.speaker_name() + ": " + proto_line.text());
                 }
+
+                // 🆕 감정 업데이트 정보 바인딩
+                for (int i = 0; i < response.emotion_updates_size(); ++i) {
+                    const auto& proto_update = response.emotion_updates(i);
+                    AgentEmotionUpdate update;
+                    update.agent_id = proto_update.agent_id();
+                    update.new_emotion = proto_update.new_emotion();
+                    result.emotion_updates.push_back(update);
+                }
             }
         }
         else {
@@ -229,6 +247,40 @@ namespace MundusVivens {
         }
         else {
             std::cerr << "[부트스트랩 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
+        }
+        return result;
+    }
+
+    std::vector<DailySchedule> MundusVivensClient::GetDailySchedules(int32_t current_tick) {
+        mundusvivens::GetDailySchedulesRequest request;
+        request.set_current_tick(current_tick);
+
+        mundusvivens::GetDailySchedulesResponse response;
+        grpc::ClientContext context;
+
+        grpc::Status status = stub_->GetDailySchedules(&context, request, &response);
+
+        std::vector<DailySchedule> result;
+        if (status.ok()) {
+            for (int i = 0; i < response.schedules_size(); ++i) {
+                const auto& proto_sched = response.schedules(i);
+                DailySchedule schedule;
+                schedule.agent_id = proto_sched.agent_id();
+                
+                for (int j = 0; j < proto_sched.items_size(); ++j) {
+                    const auto& proto_item = proto_sched.items(j);
+                    DailyScheduleItem item;
+                    item.start_hour = proto_item.start_hour();
+                    item.end_hour = proto_item.end_hour();
+                    item.target_location = proto_item.target_location();
+                    item.activity = proto_item.activity();
+                    schedule.items.push_back(item);
+                }
+                result.push_back(schedule);
+            }
+        }
+        else {
+            std::cerr << "[스케줄 조회 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
         }
         return result;
     }
