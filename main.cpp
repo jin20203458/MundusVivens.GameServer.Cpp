@@ -103,11 +103,14 @@ void SyncAgentStatuses(MundusVivens::MundusVivensClient& client) {
 }
 
 //  대화 중인 NPC 식별 헬퍼 함수
-bool IsNpcBusy(const std::string& npc_id, const std::vector<PendingDialogue>& pendings) {
+bool IsNpcBusy(const std::string& npc_id, const std::vector<PendingDialogue>& pendings, const std::vector<std::string>& busyAgentIdsFromCSharp) {
     for (const auto& pd : pendings) {
         if (pd.npc_a_id == npc_id || pd.npc_b_id == npc_id) {
             return true;
         }
+    }
+    if (std::find(busyAgentIdsFromCSharp.begin(), busyAgentIdsFromCSharp.end(), npc_id) != busyAgentIdsFromCSharp.end()) {
+        return true;
     }
     return false;
 }
@@ -193,6 +196,7 @@ int main() {
 
     int tick = 0; // 현재까지 성공적으로 동기화 완료된 마지막 틱 번호
     std::vector<PendingDialogue> pendingDialogues;
+    std::vector<std::string> busyAgentIdsFromCSharp;
 
     // =================================================================
     //  가상 월드 메인 시뮬레이션 무한 루프 시작
@@ -205,14 +209,14 @@ int main() {
         // 1. 글로벌 시간(Tick) 동기화 통지
         // -------------------------------------------------------------
         std::string out_msg;
-        bool success = client.ProcessWorldTick(target_tick, out_msg);
+        bool success = client.ProcessWorldTick(target_tick, out_msg, busyAgentIdsFromCSharp);
         if (success) {
             tick = target_tick; // 성공 시에만 틱 번호 확정
             std::cout << "⏱️ [틱 동기화] 틱 번호 " << tick << "가 C# 서버에 동기화되었습니다. 메시지: " << out_msg << std::endl;
 
             // 🆕 매 틱마다 대화 중이 아닌 NPC 대상 감정 쇠퇴 처리
             for (const auto& npc_id : NpcIds) {
-                if (!IsNpcBusy(npc_id, pendingDialogues)) {
+                if (!IsNpcBusy(npc_id, pendingDialogues, busyAgentIdsFromCSharp)) {
                     if (EmotionDecayTicks.find(npc_id) != EmotionDecayTicks.end() && EmotionDecayTicks[npc_id] > 0) {
                         EmotionDecayTicks[npc_id]--;
                         if (EmotionDecayTicks[npc_id] == 0) {
@@ -253,7 +257,7 @@ int main() {
         // -------------------------------------------------------------
         for (const auto& npc_id : NpcIds) {
             // [이슈 3] 대화 중인 NPC는 이동 대상에서 원천 배제
-            if (IsNpcBusy(npc_id, pendingDialogues)) {
+            if (IsNpcBusy(npc_id, pendingDialogues, busyAgentIdsFromCSharp)) {
                 std::cout << "💬 [이동 제한] " << NpcNames[npc_id] << "은(는) 대화 중이므로 이동할 수 없습니다. 위치 유지: [" << CurrentLocations[npc_id] << "]" << std::endl;
                 continue;
             }
@@ -406,7 +410,7 @@ int main() {
                 std::string npcB = NpcIds[j];
 
                 // 이미 둘 중 하나라도 대화 진행 중(Pending)이면 트리거 대상에서 제외
-                if (IsNpcBusy(npcA, pendingDialogues) || IsNpcBusy(npcB, pendingDialogues)) {
+                if (IsNpcBusy(npcA, pendingDialogues, busyAgentIdsFromCSharp) || IsNpcBusy(npcB, pendingDialogues, busyAgentIdsFromCSharp)) {
                     continue;
                 }
 

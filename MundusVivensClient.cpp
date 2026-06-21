@@ -175,7 +175,7 @@ namespace MundusVivens {
         }
     }
 
-    bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message) {
+    bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<std::string>& out_busy_agent_ids) {
         // 1. C++ 메인 루프에서 전진한 현재의 월드 틱 넘버를 패킷에 세팅
         mundusvivens::ProcessWorldTickRequest request;
         request.set_tick_number(tick_number);
@@ -189,6 +189,10 @@ namespace MundusVivens {
         // 3. 시간 동기화 완료 여부 반환
         if (status.ok()) {
             out_message = response.message();
+            out_busy_agent_ids.clear();
+            for (int i = 0; i < response.busy_agent_ids_size(); ++i) {
+                out_busy_agent_ids.push_back(response.busy_agent_ids(i));
+            }
             return response.success();
         }
         else {

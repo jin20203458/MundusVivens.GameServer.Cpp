@@ -100,7 +100,7 @@ public:
     bool BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message);
 
     // C++ 게임 서버의 틱(시간 흐름) 진행을 C# AI 서버에 알립니다.
-    bool ProcessWorldTick(int32_t tick_number, std::string& out_message);
+    bool ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<std::string>& out_busy_agent_ids);
 
     // 🆕 월드 부트스트랩 데이터 조회
     WorldBootstrapData GetWorldBootstrap();
