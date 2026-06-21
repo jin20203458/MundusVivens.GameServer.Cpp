@@ -147,6 +147,34 @@ namespace MundusVivens {
         }
     }
 
+    bool MundusVivensClient::BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message) {
+        mundusvivens::BatchUpdateAgentStatusRequest request;
+
+        for (const auto& update : updates) {
+            auto* agent_req = request.add_agents();
+            agent_req->set_agent_id(update.agent_id);
+            agent_req->set_location(update.location);
+            agent_req->set_emotion(update.emotion);
+            agent_req->set_activity(update.activity);
+        }
+
+        mundusvivens::BatchUpdateAgentStatusResponse response;
+        grpc::ClientContext context;
+
+        grpc::Status status = stub_->BatchUpdateAgentStatus(&context, request, &response);
+
+        if (status.ok()) {
+            out_updated_count = response.updated_count();
+            out_message = "배치 상태 동기화 성공: " + std::to_string(out_updated_count) + "개 에이전트 업데이트 완료.";
+            return true;
+        }
+        else {
+            out_updated_count = 0;
+            out_message = "gRPC 에러 발생: " + status.error_message();
+            return false;
+        }
+    }
+
     bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message) {
         // 1. C++ 메인 루프에서 전진한 현재의 월드 틱 넘버를 패킷에 세팅
         mundusvivens::ProcessWorldTickRequest request;

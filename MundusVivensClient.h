@@ -64,6 +64,14 @@ struct AgentStatus {
     std::vector<std::string> memories;
 };
 
+// 🆕 배치 상태 업데이트용 구조체
+struct AgentStatusUpdate {
+    std::string agent_id;
+    std::string location;
+    std::string emotion;
+    std::string activity;
+};
+
 class MundusVivensClient {
 public:
     // C# AI 서버의 gRPC 엔드포인트(예: "localhost:5001")를 전달받아 클라이언트를 생성합니다.
@@ -87,6 +95,9 @@ public:
 
     // C++ 게임 서버가 결정한 에이전트의 최신 상태(위치, 감정, 현재 상태)를 C# 서버로 동기화합니다.
     bool UpdateAgentStatus(const std::string& agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message);
+
+    // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
+    bool BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message);
 
     // C++ 게임 서버의 틱(시간 흐름) 진행을 C# AI 서버에 알립니다.
     bool ProcessWorldTick(int32_t tick_number, std::string& out_message);

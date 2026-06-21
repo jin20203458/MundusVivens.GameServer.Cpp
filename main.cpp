@@ -38,6 +38,20 @@ std::map<std::string, std::string> CurrentEmotions;
 // (Key: 알파벳 순으로 정렬된 두 NPC ID를 ":"로 병합한 문자열, Value: 다시 대화가 가능해지는 시점의 틱 넘버)
 std::map<std::string, int> DialogueCooldowns;
 
+// 🆕 꼬리물기 방지를 위한 NPC 개인별 전역 대화 쿨다운 테이블 (Value: 다시 대화가 가능해지는 시점의 틱 넘버)
+std::map<std::string, int> GlobalDialogueCooldowns;
+
+// 🆕 NPC별 감정 쇠퇴 남은 틱수 테이블
+std::map<std::string, int> EmotionDecayTicks;
+
+// 🆕 NPC별 고유 기본 감정 테이블 (부트스트랩 시 갱신됨)
+std::map<std::string, std::string> BaseEmotions;
+
+// 🆕 네트워크 최적화를 위한 이전 상태 전송값 캐싱 테이블
+std::map<std::string, std::string> LastSentLocations;
+std::map<std::string, std::string> LastSentEmotions;
+std::map<std::string, std::string> LastSentActivities;
+
 // 🆕 NPC별 일일 스케줄 저장 테이블
 std::vector<MundusVivens::DailySchedule> DailySchedules;
 
@@ -52,6 +66,41 @@ struct PendingDialogue {
     int triggered_tick;
     std::string meeting_location; // 대화 시작 장소 스냅샷
 };
+
+// 🆕 네트워크 상태 동기화 전송 최적화 함수 (배치 방식)
+void SyncAgentStatuses(MundusVivens::MundusVivensClient& client) {
+    std::vector<MundusVivens::AgentStatusUpdate> updates;
+    for (const auto& npc_id : NpcIds) {
+        const std::string& loc = CurrentLocations[npc_id];
+        const std::string& emo = CurrentEmotions[npc_id];
+        const std::string& act = CurrentActivities[npc_id];
+
+        if (LastSentLocations[npc_id] != loc || LastSentEmotions[npc_id] != emo || LastSentActivities[npc_id] != act) {
+            MundusVivens::AgentStatusUpdate update;
+            update.agent_id = npc_id;
+            update.location = loc;
+            update.emotion = emo;
+            update.activity = act;
+            updates.push_back(update);
+        }
+    }
+
+    if (!updates.empty()) {
+        int32_t updated_count = 0;
+        std::string status_msg;
+        bool success = client.BatchUpdateAgentStatus(updates, updated_count, status_msg);
+        if (success) {
+            for (const auto& update : updates) {
+                LastSentLocations[update.agent_id] = update.location;
+                LastSentEmotions[update.agent_id] = update.emotion;
+                LastSentActivities[update.agent_id] = update.activity;
+            }
+            std::cout << "🔄 [gRPC-Batch] " << status_msg << std::endl;
+        } else {
+            std::cerr << "❌ [gRPC-Batch 에러] 배치 업데이트 전송 실패: " << status_msg << std::endl;
+        }
+    }
+}
 
 //  대화 중인 NPC 식별 헬퍼 함수
 bool IsNpcBusy(const std::string& npc_id, const std::vector<PendingDialogue>& pendings) {
@@ -129,6 +178,7 @@ int main() {
         CurrentLocations[agent.agent_id] = agent.location;
         CurrentActivities[agent.agent_id] = agent.activity;
         CurrentEmotions[agent.agent_id] = agent.emotion;
+        BaseEmotions[agent.agent_id] = agent.emotion; // 🆕 기본 감정 설정
     }
 
     std::cout << "[C++ 서버] 월드 부트스트랩 완료: 위치 " << Locations.size()
@@ -159,6 +209,24 @@ int main() {
         if (success) {
             tick = target_tick; // 성공 시에만 틱 번호 확정
             std::cout << "⏱️ [틱 동기화] 틱 번호 " << tick << "가 C# 서버에 동기화되었습니다. 메시지: " << out_msg << std::endl;
+
+            // 🆕 매 틱마다 대화 중이 아닌 NPC 대상 감정 쇠퇴 처리
+            for (const auto& npc_id : NpcIds) {
+                if (!IsNpcBusy(npc_id, pendingDialogues)) {
+                    if (EmotionDecayTicks.find(npc_id) != EmotionDecayTicks.end() && EmotionDecayTicks[npc_id] > 0) {
+                        EmotionDecayTicks[npc_id]--;
+                        if (EmotionDecayTicks[npc_id] == 0) {
+                            std::string old_emo = CurrentEmotions[npc_id];
+                            std::string base_emo = BaseEmotions[npc_id];
+                            if (old_emo != base_emo) {
+                                CurrentEmotions[npc_id] = base_emo;
+                                std::cout << "🎭 [감정 쇠퇴] " << NpcNames[npc_id] << "의 감정이 오래되어 기본 감정 [" 
+                                          << base_emo << "](으)로 자동 복귀되었습니다. (이전 감정: " << old_emo << ")" << std::endl;
+                            }
+                        }
+                    }
+                }
+            }
         }
         else {
             std::cerr << "❌ [틱 동기화 에러] 틱 " << target_tick << " 동기화 실패. 동일 번호로 재시도합니다: " << out_msg << std::endl;
@@ -187,8 +255,6 @@ int main() {
             // [이슈 3] 대화 중인 NPC는 이동 대상에서 원천 배제
             if (IsNpcBusy(npc_id, pendingDialogues)) {
                 std::cout << "💬 [이동 제한] " << NpcNames[npc_id] << "은(는) 대화 중이므로 이동할 수 없습니다. 위치 유지: [" << CurrentLocations[npc_id] << "]" << std::endl;
-                std::string status_msg;
-                client.UpdateAgentStatus(npc_id, CurrentLocations[npc_id], CurrentEmotions[npc_id], CurrentActivities[npc_id], status_msg);
                 continue;
             }
 
@@ -227,9 +293,6 @@ int main() {
                 std::cout << "🧍 [위치 잔류] " << NpcNames[npc_id] << " 위치 유지: [" << CurrentLocations[npc_id] << "] (현재 행동: " << CurrentActivities[npc_id] << ")" << std::endl;
             }
 
-            // C++ 월드에서 가공된 NPC의 최신 물리 상태를 C# AI 인메모리 객체로 역동기화 (패킷 송신)
-            std::string status_msg;
-            client.UpdateAgentStatus(npc_id, CurrentLocations[npc_id], CurrentEmotions[npc_id], CurrentActivities[npc_id], status_msg);
         }
 
         // -------------------------------------------------------------
@@ -246,14 +309,10 @@ int main() {
                 CurrentActivities[it->npc_a_id] = "대기";
                 CurrentActivities[it->npc_b_id] = "대기";
 
-                std::string status_msg;
-                client.UpdateAgentStatus(it->npc_a_id, CurrentLocations[it->npc_a_id],
-                    CurrentEmotions[it->npc_a_id], "대기", status_msg);
-                client.UpdateAgentStatus(it->npc_b_id, CurrentLocations[it->npc_b_id],
-                    CurrentEmotions[it->npc_b_id], "대기", status_msg);
-
                 std::string cooldown_key = GetCooldownKey(it->npc_a_id, it->npc_b_id);
                 DialogueCooldowns[cooldown_key] = tick + 3; // 쿨다운 3틱 적용
+                GlobalDialogueCooldowns[it->npc_a_id] = tick + 3; // 개인별 전역 쿨다운
+                GlobalDialogueCooldowns[it->npc_b_id] = tick + 3;
 
                 it = pendingDialogues.erase(it);
                 continue;
@@ -289,6 +348,32 @@ int main() {
                     if (CurrentEmotions.find(em_update.agent_id) != CurrentEmotions.end()) {
                         CurrentEmotions[em_update.agent_id] = em_update.new_emotion;
                         std::cout << "🎭 [감정 동기화] " << NpcNames[em_update.agent_id] << "의 감정이 [" << em_update.new_emotion << "](으)로 업데이트되었습니다." << std::endl;
+
+                        // 🆕 감정에 따른 감정 쇠퇴 틱수 지정
+                        int decay_ticks = 3; // 기본 3틱
+                        std::string new_emo = em_update.new_emotion;
+                        if (new_emo.find("분노") != std::string::npos || 
+                            new_emo.find("공포") != std::string::npos || 
+                            new_emo.find("우울") != std::string::npos || 
+                            new_emo.find("슬픔") != std::string::npos || 
+                            new_emo.find("의심") != std::string::npos || 
+                            new_emo.find("경계") != std::string::npos ||
+                            new_emo.find("냉소") != std::string::npos ||
+                            new_emo.find("적대") != std::string::npos) {
+                            decay_ticks = 10;
+                        } else if (new_emo.find("기쁨") != std::string::npos || 
+                                   new_emo.find("놀람") != std::string::npos || 
+                                   new_emo.find("불안") != std::string::npos || 
+                                   new_emo.find("기대") != std::string::npos ||
+                                   new_emo.find("연민") != std::string::npos) {
+                            decay_ticks = 6;
+                        } else if (new_emo.find("흥분") != std::string::npos ||
+                                   new_emo.find("유쾌") != std::string::npos ||
+                                   new_emo.find("재미") != std::string::npos ||
+                                   new_emo.find("흥미") != std::string::npos) {
+                            decay_ticks = 3;
+                        }
+                        EmotionDecayTicks[em_update.agent_id] = decay_ticks;
                     }
                 }
 
@@ -296,15 +381,13 @@ int main() {
                 CurrentActivities[it->npc_a_id] = "대화 마침";
                 CurrentActivities[it->npc_b_id] = "대화 마침";
 
-                // 대화 마침 상태를 C# AI 서버에도 즉시 역동기화하여 대화 종료 상태 반영
-                std::string status_msg;
-                // [이슈 2] "평온함" 하드코딩 제거 → CurrentEmotions 맵 참조
-                client.UpdateAgentStatus(it->npc_a_id, CurrentLocations[it->npc_a_id], CurrentEmotions[it->npc_a_id], CurrentActivities[it->npc_a_id], status_msg);
-                client.UpdateAgentStatus(it->npc_b_id, CurrentLocations[it->npc_b_id], CurrentEmotions[it->npc_b_id], CurrentActivities[it->npc_b_id], status_msg);
-
                 // 무한 수다 방지를 위해 해당 조에게 5틱(25초) 동안 대화 금지 쿨다운 가중치 등록
                 std::string cooldown_key = GetCooldownKey(it->npc_a_id, it->npc_b_id);
                 DialogueCooldowns[cooldown_key] = tick + 5;
+
+                // 🆕 개인별 꼬리물기 연쇄 방지를 위한 전역 대화 쿨다운 지정 (3틱)
+                GlobalDialogueCooldowns[it->npc_a_id] = tick + 3;
+                GlobalDialogueCooldowns[it->npc_b_id] = tick + 3;
 
                 // pending 목록에서 제거
                 it = pendingDialogues.erase(it);
@@ -324,6 +407,14 @@ int main() {
 
                 // 이미 둘 중 하나라도 대화 진행 중(Pending)이면 트리거 대상에서 제외
                 if (IsNpcBusy(npcA, pendingDialogues) || IsNpcBusy(npcB, pendingDialogues)) {
+                    continue;
+                }
+
+                // 🆕 개인별 전역 대화 쿨다운이 만료되지 않았으면 트리거 대상에서 제외 (꼬리물기 스팸 차단)
+                if (GlobalDialogueCooldowns.find(npcA) != GlobalDialogueCooldowns.end() && tick < GlobalDialogueCooldowns[npcA]) {
+                    continue;
+                }
+                if (GlobalDialogueCooldowns.find(npcB) != GlobalDialogueCooldowns.end() && tick < GlobalDialogueCooldowns[npcB]) {
                     continue;
                 }
 
@@ -378,11 +469,6 @@ int main() {
                             CurrentActivities[npcA] = NpcNames[npcB] + "와(과) 대화 중";
                             CurrentActivities[npcB] = NpcNames[npcA] + "와(과) 대화 중";
 
-                            // 대화 중 상태를 C# AI 서버에도 역동기화
-                            std::string status_msg;
-                            // [이슈 2] "평온함" 하드코딩 제거 → CurrentEmotions 맵 참조
-                            client.UpdateAgentStatus(npcA, CurrentLocations[npcA], CurrentEmotions[npcA], CurrentActivities[npcA], status_msg);
-                            client.UpdateAgentStatus(npcB, CurrentLocations[npcB], CurrentEmotions[npcB], CurrentActivities[npcB], status_msg);
                         } else {
                             std::cerr << "❌ [대화 요청 실패] 대화가 큐에 등록되지 못했습니다." << std::endl;
                         }
@@ -392,7 +478,7 @@ int main() {
         }
 
         // -------------------------------------------------------------
-        // 5. [이슈 A] DialogueCooldowns 맵 클리닝 (Sweep)
+        // 5. [이슈 A] DialogueCooldowns & GlobalDialogueCooldowns 맵 클리닝 (Sweep)
         // -------------------------------------------------------------
         for (auto it = DialogueCooldowns.begin(); it != DialogueCooldowns.end(); ) {
             if (tick >= it->second) {
@@ -401,6 +487,16 @@ int main() {
                 ++it;
             }
         }
+        for (auto it = GlobalDialogueCooldowns.begin(); it != GlobalDialogueCooldowns.end(); ) {
+            if (tick >= it->second) {
+                it = GlobalDialogueCooldowns.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // 🆕 틱의 마지막 부분에서 변경된 NPC 상태들을 한 번에 배치 동기화
+        SyncAgentStatuses(client);
 
         // 5초 동안 메인 스레드를 수면(Sleep)시켜 루프 주기 확보
         std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -411,11 +507,23 @@ int main() {
     // -------------------------------------------------------------
     if (!pendingDialogues.empty()) {
         std::cout << "\n🧹 [종료 정리] 진행 중인 대화가 남아있어 NPC 상태를 원복합니다..." << std::endl;
+        std::vector<MundusVivens::AgentStatusUpdate> shutdown_updates;
         for (const auto& pd : pendingDialogues) {
-            std::string status_msg;
-            client.UpdateAgentStatus(pd.npc_a_id, CurrentLocations[pd.npc_a_id], CurrentEmotions[pd.npc_a_id], "대기", status_msg);
-            client.UpdateAgentStatus(pd.npc_b_id, CurrentLocations[pd.npc_b_id], CurrentEmotions[pd.npc_b_id], "대기", status_msg);
-            std::cout << "  - " << NpcNames[pd.npc_a_id] << "와(과) " << NpcNames[pd.npc_b_id] << "을(를) '대기' 상태로 복원했습니다." << std::endl;
+            CurrentActivities[pd.npc_a_id] = "대기";
+            CurrentActivities[pd.npc_b_id] = "대기";
+
+            MundusVivens::AgentStatusUpdate upA{pd.npc_a_id, CurrentLocations[pd.npc_a_id], CurrentEmotions[pd.npc_a_id], "대기"};
+            MundusVivens::AgentStatusUpdate upB{pd.npc_b_id, CurrentLocations[pd.npc_b_id], CurrentEmotions[pd.npc_b_id], "대기"};
+            shutdown_updates.push_back(upA);
+            shutdown_updates.push_back(upB);
+
+            std::cout << "  - " << NpcNames[pd.npc_a_id] << "와(과) " << NpcNames[pd.npc_b_id] << "을(를) '대기' 상태로 복원 준비." << std::endl;
+        }
+        if (!shutdown_updates.empty()) {
+            int32_t count = 0;
+            std::string msg;
+            client.BatchUpdateAgentStatus(shutdown_updates, count, msg);
+            std::cout << "  => [종료 정리 완료] " << msg << std::endl;
         }
     }
     std::cout << "[C++ 서버] 시뮬레이션 서버가 안전하게 종료되었습니다." << std::endl;
