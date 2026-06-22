@@ -11,8 +11,10 @@ endif()
 
 project(MundusVivensGameServer CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(EnTT CONFIG REQUIRED)
 
 # MSVC 한글 인코딩 에러 방지 (/utf-8 flag)
 if (MSVC)
@@ -69,6 +71,15 @@ add_executable(MundusVivensGameServer
     main.cpp
     MundusVivensClient.cpp
     MundusVivensClient.h
+    Components.h
+    SpatialHashGrid.h
+    SpatialHashGrid.cpp
+    Systems.h
+    Systems.cpp
+    GameLoop.h
+    GameLoop.cpp
+    AsyncGrpcClient.h
+    AsyncGrpcClient.cpp
     ${GEN_PROTO_SRC}
     ${GEN_PROTO_HDR}
     ${GEN_GRPC_SRC}
@@ -84,4 +95,5 @@ target_include_directories(MundusVivensGameServer PRIVATE
 target_link_libraries(MundusVivensGameServer PRIVATE
     gRPC::grpc++
     protobuf::libprotobuf
+    EnTT::EnTT
 )
