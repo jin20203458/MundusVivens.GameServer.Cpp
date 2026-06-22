@@ -4,6 +4,7 @@
   "dependencies": [
     "grpc",
     "protobuf",
-    "entt"
+    "entt",
+    "boost-asio"
   ]
 }

@@ -55,3 +55,9 @@ struct LastSyncedComp {
 
 // 대화 중인 바쁜 NPC를 나타내는 태그 컴포넌트
 struct BusyTag {};
+
+// 접속한 플레이어를 나타내는 태그 컴포넌트
+struct PlayerTag {
+    uint32_t session_index = 0;  // TcpServer의 세션 인덱스 (패킷 전송용)
+};
+

@@ -1,7 +1,11 @@
 #include "Systems.h"
 #include "Components.h"
+#include "TcpServer.h"
+#include "ClientSession.h"
+#include "mundus_vivens.pb.h"
 #include <iostream>
 #include <algorithm>
+
 
 // 헬퍼 함수: NPC가 대화 중이거나 C#에서 Busy 상태인지 판별 및 BusyTag 동기화
 bool IsNpcBusy(entt::entity e, const std::vector<PendingDialogue>& pendings,
@@ -465,3 +469,306 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
         });
     }
 }
+
+// 7. 플레이어 커맨드 처리 시스템 구현
+void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
+                          MundusVivens::AsyncGrpcClient& async_client, int tick,
+                          std::vector<PendingDialogue>& pendingDialogues) {
+    std::vector<PlayerCommand> commands = tcp.DrainPlayerCommands();
+    for (const auto& cmd : commands) {
+        if (cmd.type == PlayerCommand::Login) {
+            mundusvivens::LoginRequest req;
+            if (!req.ParseFromString(cmd.payload)) continue;
+
+            // 플레이어 검색 혹은 신규 생성
+            entt::entity player_ent = entt::null;
+            auto player_view = reg.view<PlayerTag, IdentityComp>();
+            for (auto entity : player_view) {
+                const auto& identity = player_view.get<IdentityComp>(entity);
+                if (identity.npc_id == cmd.player_id) {
+                    player_ent = entity;
+                    break;
+                }
+            }
+
+            if (player_ent == entt::null) {
+                player_ent = reg.create();
+                reg.emplace<PlayerTag>(player_ent, cmd.session_index);
+                reg.emplace<IdentityComp>(player_ent, cmd.player_id, req.player_name());
+                reg.emplace<LocationComp>(player_ent, 0u, "광장");
+                reg.emplace<LastSyncedComp>(player_ent);
+                std::cout << "👤 [플레이어 로그인] 신규 플레이어 등록: " << req.player_name() << " (ID: " << cmd.player_id << ")" << std::endl;
+            } else {
+                // 재접속 시 세션 인덱스 최신화
+                reg.get<PlayerTag>(player_ent).session_index = cmd.session_index;
+                std::cout << "👤 [플레이어 재접속] 기존 플레이어 세션 갱신: " << req.player_name() << std::endl;
+            }
+
+            // 플레이어 공간 등록
+            auto& loc = reg.get<LocationComp>(player_ent);
+            uint32_t zone_id = grid.GetOrCreateZoneId(loc.location_name);
+            loc.zone_id = zone_id;
+            grid.Insert(player_ent, zone_id);
+
+            // 로그인 응답 패킷 작성
+            mundusvivens::LoginResponse resp;
+            resp.set_success(true);
+            resp.set_message("로그인에 성공했습니다.");
+
+            // 월드의 고정 구역 정보 리스트 (예시로 플레이어가 갈 수 있는 곳)
+            resp.add_locations("광장");
+            resp.add_locations("여관");
+            resp.add_locations("시장");
+            resp.add_locations("성당");
+
+            // 현재 NPC 전체 상태 추가
+            auto npc_view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>();
+            for (auto entity : npc_view) {
+                if (reg.all_of<PlayerTag>(entity)) continue; // 플레이어는 제외
+                
+                const auto& npc_id = npc_view.get<IdentityComp>(entity);
+                const auto& npc_loc = npc_view.get<LocationComp>(entity);
+                const auto& npc_emo = npc_view.get<EmotionComp>(entity);
+                const auto& npc_act = npc_view.get<ActivityComp>(entity);
+
+                auto* snapshot = resp.add_npcs();
+                snapshot->set_npc_id(npc_id.npc_id);
+                snapshot->set_display_name(npc_id.display_name);
+                snapshot->set_location(npc_loc.location_name);
+                snapshot->set_emotion(npc_emo.current_emotion);
+                snapshot->set_activity(npc_act.current_activity);
+            }
+
+            std::string serialized;
+            if (resp.SerializeToString(&serialized)) {
+                tcp.SendTo(cmd.session_index, PacketId::SC_LOGIN_ACK, serialized);
+            }
+        }
+        else if (cmd.type == PlayerCommand::Move) {
+            mundusvivens::PlayerMoveRequest req;
+            if (!req.ParseFromString(cmd.payload)) continue;
+
+            entt::entity player_ent = entt::null;
+            auto player_view = reg.view<PlayerTag>();
+            for (auto entity : player_view) {
+                if (player_view.get<PlayerTag>(entity).session_index == cmd.session_index) {
+                    player_ent = entity;
+                    break;
+                }
+            }
+
+            if (player_ent != entt::null) {
+                auto& loc = reg.get<LocationComp>(player_ent);
+                const auto& identity = reg.get<IdentityComp>(player_ent);
+                std::string old_loc = loc.location_name;
+                std::string new_loc = req.target_location();
+
+                uint32_t old_zone = loc.zone_id;
+                uint32_t new_zone = grid.GetOrCreateZoneId(new_loc);
+
+                loc.location_name = new_loc;
+                loc.zone_id = new_zone;
+                grid.Move(player_ent, old_zone, new_zone);
+
+                std::cout << "🏃 [TCP 플레이어 이동] 플레이어 " << identity.display_name 
+                          << " 이동: [" << old_loc << "] ➔ [" << new_loc << "]" << std::endl;
+            }
+        }
+        else if (cmd.type == PlayerCommand::TalkToNpc) {
+            mundusvivens::TalkToNpcRequest req;
+            if (!req.ParseFromString(cmd.payload)) continue;
+
+            entt::entity player_ent = entt::null;
+            auto player_view = reg.view<PlayerTag>();
+            for (auto entity : player_view) {
+                if (player_view.get<PlayerTag>(entity).session_index == cmd.session_index) {
+                    player_ent = entity;
+                    break;
+                }
+            }
+
+            if (player_ent == entt::null) continue;
+            const auto& player_loc = reg.get<LocationComp>(player_ent);
+
+            // 대화 대상 NPC 엔티티 검색
+            entt::entity npc_ent = entt::null;
+            auto npc_view = reg.view<IdentityComp, LocationComp>();
+            for (auto entity : npc_view) {
+                if (reg.all_of<PlayerTag>(entity)) continue;
+                if (npc_view.get<IdentityComp>(entity).npc_id == req.npc_id()) {
+                    npc_ent = entity;
+                    break;
+                }
+            }
+
+            if (npc_ent == entt::null) {
+                std::cerr << "❌ [플레이어 대화 에러] NPC를 찾을 수 없음: " << req.npc_id() << std::endl;
+                continue;
+            }
+
+            const auto& npc_loc = reg.get<LocationComp>(npc_ent);
+            const auto& npc_id = reg.get<IdentityComp>(npc_ent);
+
+            // 동일 구역인지 검증
+            if (player_loc.zone_id != npc_loc.zone_id) {
+                std::cerr << "❌ [플레이어 대화 에러] 플레이어와 NPC가 다른 구역에 있음. 플레이어: " 
+                          << player_loc.location_name << ", NPC: " << npc_loc.location_name << std::endl;
+                continue;
+            }
+
+            // NPC 대화 불가 여부 검증 (대화 중 여부)
+            std::vector<std::string> empty_busy;
+            if (IsNpcBusy(npc_ent, pendingDialogues, empty_busy, reg)) {
+                std::cout << "⏳ [플레이어 대화 불가] NPC " << npc_id.display_name << "은(는) 이미 대화 중입니다." << std::endl;
+                continue;
+            }
+
+            std::cout << "💬 [플레이어 대화 시작] 플레이어와 NPC " << npc_id.display_name << " 대화 시도..." << std::endl;
+
+            // 대화 시작 gRPC 비동기 요청
+            uint32_t session_idx = cmd.session_index;
+            std::string npc_name = npc_id.display_name;
+            
+            // NPC 임시 대화 대기 상태
+            reg.get<ActivityComp>(npc_ent).current_activity = "플레이어와 대화 대기";
+            reg.emplace_or_replace<BusyTag>(npc_ent);
+            reg.emplace_or_replace<BusyTag>(player_ent);
+
+            async_client.StartPlayerDialogueAsync(cmd.player_id, req.npc_id(), 
+                [&reg, tcp_addr = &tcp, session_idx, npc_name, npc_ent, player_ent](bool success, const std::string& session_id, const std::string& greeting, const std::string& message) {
+                    if (success) {
+                        std::cout << "🚀 플레이어 대화 세션 오픈 성공: " << session_id << std::endl;
+                        if (reg.valid(npc_ent)) {
+                            reg.get<ActivityComp>(npc_ent).current_activity = "플레이어와 대화 중";
+                        }
+                        mundusvivens::NpcReplyPayload reply;
+                        reply.set_session_id(session_id);
+                        reply.set_npc_name(npc_name);
+                        reply.set_reply_text(greeting);
+
+                        std::string serialized;
+                        if (reply.SerializeToString(&serialized)) {
+                            tcp_addr->SendTo(session_idx, PacketId::SC_NPC_REPLY, serialized);
+                        }
+                    } else {
+                        std::cerr << "❌ [플레이어 대화 실패] 대화 세션을 생성하지 못했습니다. 사유: " << message << std::endl;
+                        if (reg.valid(npc_ent)) {
+                            reg.get<ActivityComp>(npc_ent).current_activity = "대기";
+                            if (reg.all_of<BusyTag>(npc_ent)) reg.erase<BusyTag>(npc_ent);
+                        }
+                        if (reg.valid(player_ent) && reg.all_of<BusyTag>(player_ent)) {
+                            reg.erase<BusyTag>(player_ent);
+                        }
+                    }
+                }
+            );
+        }
+        else if (cmd.type == PlayerCommand::PlayerMessage) {
+            mundusvivens::PlayerMessageRequest req;
+            if (!req.ParseFromString(cmd.payload)) continue;
+
+            uint32_t session_idx = cmd.session_index;
+            entt::entity player_ent = entt::null;
+            auto player_view = reg.view<PlayerTag>();
+            for (auto entity : player_view) {
+                if (player_view.get<PlayerTag>(entity).session_index == cmd.session_index) {
+                    player_ent = entity;
+                    break;
+                }
+            }
+
+            std::string npc_name = "NPC";
+            if (player_ent != entt::null) {
+                auto npc_view = reg.view<IdentityComp, BusyTag>();
+                for (auto entity : npc_view) {
+                    if (reg.all_of<PlayerTag>(entity)) continue;
+                    npc_name = npc_view.get<IdentityComp>(entity).display_name;
+                    break;
+                }
+            }
+
+            async_client.SendPlayerMessageAsync(req.session_id(), req.message(),
+                [tcp_addr = &tcp, session_idx, npc_name, req](bool success, const std::string& reply_text) {
+                    if (success) {
+                        mundusvivens::NpcReplyPayload reply;
+                        reply.set_session_id(req.session_id());
+                        reply.set_npc_name(npc_name);
+                        reply.set_reply_text(reply_text);
+
+                        std::string serialized;
+                        if (reply.SerializeToString(&serialized)) {
+                            tcp_addr->SendTo(session_idx, PacketId::SC_NPC_REPLY, serialized);
+                        }
+                    } else {
+                        std::cerr << "❌ [플레이어 메시지 전송 실패] 대화 응답 전송 실패" << std::endl;
+                    }
+                }
+            );
+        }
+        else if (cmd.type == PlayerCommand::EndDialogue) {
+            mundusvivens::EndDialogueRequest req;
+            if (!req.ParseFromString(cmd.payload)) continue;
+
+            entt::entity player_ent = entt::null;
+            auto player_view = reg.view<PlayerTag>();
+            for (auto entity : player_view) {
+                if (player_view.get<PlayerTag>(entity).session_index == cmd.session_index) {
+                    player_ent = entity;
+                    break;
+                }
+            }
+
+            entt::entity npc_ent = entt::null;
+            auto npc_view = reg.view<IdentityComp, ActivityComp, BusyTag>();
+            for (auto entity : npc_view) {
+                if (reg.all_of<PlayerTag>(entity)) continue;
+                if (npc_view.get<ActivityComp>(entity).current_activity.find("플레이어") != std::string::npos) {
+                    npc_ent = entity;
+                    break;
+                }
+            }
+
+            async_client.EndPlayerDialogueAsync(req.session_id(),
+                [&reg, npc_ent, player_ent](bool success, const std::string& summary) {
+                    std::cout << "💬 [플레이어 대화 종료 수신] 요약: " << summary << std::endl;
+                    if (reg.valid(npc_ent)) {
+                        reg.get<ActivityComp>(npc_ent).current_activity = "대기";
+                        if (reg.all_of<BusyTag>(npc_ent)) reg.erase<BusyTag>(npc_ent);
+                    }
+                    if (reg.valid(player_ent) && reg.all_of<BusyTag>(player_ent)) {
+                        reg.erase<BusyTag>(player_ent);
+                    }
+                }
+            );
+        }
+    }
+}
+
+// 8. 월드 상태 스냅샷 클라이언트 브로드캐스트 시스템 구현
+void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick) {
+    mundusvivens::WorldSnapshotPayload payload;
+    payload.set_tick(tick);
+
+    auto view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>();
+    for (auto entity : view) {
+        if (reg.all_of<PlayerTag>(entity)) continue; // 플레이어는 제외
+
+        const auto& identity = view.get<IdentityComp>(entity);
+        const auto& loc = view.get<LocationComp>(entity);
+        const auto& emo = view.get<EmotionComp>(entity);
+        const auto& act = view.get<ActivityComp>(entity);
+
+        auto* snapshot = payload.add_npcs();
+        snapshot->set_npc_id(identity.npc_id);
+        snapshot->set_display_name(identity.display_name);
+        snapshot->set_location(loc.location_name);
+        snapshot->set_emotion(emo.current_emotion);
+        snapshot->set_activity(act.current_activity);
+    }
+
+    std::string serialized;
+    if (payload.SerializeToString(&serialized)) {
+        tcp.BroadcastPacket(PacketId::SC_WORLD_SNAPSHOT, serialized);
+    }
+}
+

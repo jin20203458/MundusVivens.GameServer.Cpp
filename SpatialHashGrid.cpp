@@ -18,10 +18,19 @@ uint32_t SpatialHashGrid::GetOrCreateZoneId(const std::string& location_name) {
 
 void SpatialHashGrid::Insert(entt::entity e, uint32_t zone_id) {
     if (zone_id == 0) return;
-    auto& list = zone_entities_[zone_id];
-    if (std::find(list.begin(), list.end(), e) == list.end()) {
-        list.push_back(e);
+    
+    auto it = entity_to_zone_.find(e);
+    if (it != entity_to_zone_.end()) {
+        if (it->second == zone_id) {
+            return; // 🆕 이미 해당 구역에 삽입되어 있음 (O(1) 스킵)
+        }
+        // 다른 구역에 배치되어 있던 경우 새 구역으로 이동
+        Move(e, it->second, zone_id);
+        return;
     }
+    
+    zone_entities_[zone_id].push_back(e);
+    entity_to_zone_[e] = zone_id;
 }
 
 void SpatialHashGrid::Move(entt::entity e, uint32_t old_zone, uint32_t new_zone) {
@@ -37,6 +46,7 @@ void SpatialHashGrid::Remove(entt::entity e, uint32_t zone_id) {
         auto& list = it->second;
         list.erase(std::remove(list.begin(), list.end(), e), list.end());
     }
+    entity_to_zone_.erase(e);
 }
 
 const std::vector<entt::entity>& SpatialHashGrid::GetEntitiesInZone(uint32_t zone_id) const {
@@ -47,3 +57,12 @@ const std::vector<entt::entity>& SpatialHashGrid::GetEntitiesInZone(uint32_t zon
     }
     return empty_;
 }
+
+uint32_t SpatialHashGrid::GetEntityZone(entt::entity e) const {
+    auto it = entity_to_zone_.find(e);
+    if (it != entity_to_zone_.end()) {
+        return it->second;
+    }
+    return 0;
+}
+

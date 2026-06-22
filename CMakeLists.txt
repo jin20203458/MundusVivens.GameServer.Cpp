@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(EnTT CONFIG REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
+
 
 # MSVC 한글 인코딩 에러 방지 (/utf-8 flag)
 if (MSVC)
@@ -80,6 +82,11 @@ add_executable(MundusVivensGameServer
     GameLoop.cpp
     AsyncGrpcClient.h
     AsyncGrpcClient.cpp
+    PacketProtocol.h
+    TcpServer.h
+    TcpServer.cpp
+    ClientSession.h
+    ClientSession.cpp
     ${GEN_PROTO_SRC}
     ${GEN_PROTO_HDR}
     ${GEN_GRPC_SRC}
@@ -96,4 +103,5 @@ target_link_libraries(MundusVivensGameServer PRIVATE
     gRPC::grpc++
     protobuf::libprotobuf
     EnTT::EnTT
+    Boost::system
 )

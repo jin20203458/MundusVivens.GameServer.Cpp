@@ -15,6 +15,9 @@
 #include "Components.h"
 #include "SpatialHashGrid.h"
 #include "Systems.h"
+#include "TcpServer.h"
+#include "ClientSession.h"
+
 
 // 종료 시그널 제어 플래그 및 시그널 핸들러 정의
 std::atomic<bool> keep_running(true);
@@ -38,6 +41,11 @@ int main() {
     std::cout << "🎮 Mundus Vivens — C++ 게임 서버 시뮬레이터 콘솔 (GameLoop + AsyncGrpcClient)" << std::endl;
     std::cout << "=======================================================\n" << std::endl;
 
+    // Boost.Asio I/O 서비스 및 TCP 서버 초기화 (포트 7777)
+    boost::asio::io_context io;
+    TcpServer tcp_server(io, 7777);
+    tcp_server.Start();
+
     // C# AI gRPC 서버 엔드포인트 주소 설정
     const std::string server_address = "localhost:5001";
     std::cout << "[C++ 서버] " << server_address << " 포트의 C# AI gRPC 서버로 연결 시도 중..." << std::endl;
@@ -47,6 +55,7 @@ int main() {
     // 비동기 통신용 클라이언트 초기화
     MundusVivens::AsyncGrpcClient async_client(server_address);
     std::cout << "[C++ 서버] gRPC 통신 채널이 성공적으로 초기화되었습니다." << std::endl;
+
 
     // C# 서버로부터 부트스트랩 데이터 동적 로드
     std::cout << "[C++ 서버] C# 서버로부터 월드 부트스트랩 데이터를 요청하는 중..." << std::endl;
@@ -114,10 +123,16 @@ int main() {
     GameLoop loop(20.0);
 
     loop.Run([&](int physical_tick) {
-        // 1. 매 프레임(50ms) 완료된 비동기 gRPC 응답 처리 및 콜백 디스패치
+        // 1. Boost.Asio I/O 이벤트 처리 (논블로킹 코루틴 스케줄러 디스패치)
+        io.poll();
+
+        // 2. 매 프레임(50ms) 완료된 비동기 gRPC 응답 처리 및 콜백 디스패치
         async_client.DrainCompletedResults();
 
-        // 2. 5초마다(물리 틱 100회당 1회) C# AI 서버와 논리 틱 동기화 및 ECS 시스템 구동
+        // 3. 매 프레임(50ms)마다 플레이어 패킷 명령어 즉각 처리 (이동, 대화 메시지 등 저지연 반응 필요)
+        SystemPlayerCommands(registry, spatial_grid, tcp_server, async_client, tick, pendingDialogues);
+
+        // 4. 5초마다(물리 틱 100회당 1회) C# AI 서버와 논리 틱 동기화 및 ECS 시스템 구동
         if (physical_tick % 100 == 0) {
             if (!is_tick_sync_pending) {
                 is_tick_sync_pending = true;
@@ -177,6 +192,9 @@ int main() {
                         // 만료 쿨다운 청소 및 네트워크 동기화
                         SystemCooldownSweep(registry, tick, dialogueCooldowns);
                         SystemNetworkSync(registry, async_client);
+
+                        // 🆕 월드 상태 스냅샷 클라이언트 브로드캐스트 (5초마다 동기화 완료 후 실행)
+                        SystemBroadcastWorldSnapshot(registry, tcp_server, tick);
                         
                     } else {
                         std::cerr << "❌ [틱 동기화 에러] 틱 " << target_tick << " 동기화 실패. 다음 논리 주기(5초 후)에 재시도합니다: " << message << std::endl;
@@ -185,6 +203,7 @@ int main() {
             }
         }
     }, keep_running);
+
 
     // -------------------------------------------------------------
     // Graceful Shutdown: 남아있는 pending 대화 NPC 상태 원복

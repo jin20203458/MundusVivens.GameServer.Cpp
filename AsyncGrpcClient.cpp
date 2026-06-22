@@ -188,4 +188,64 @@ void AsyncGrpcClient::BatchUpdateStatusAsync(const std::vector<AgentStatusUpdate
     call->reader->Finish(&call->response, &call->status, (void*)call);
 }
 
+void AsyncGrpcClient::StartPlayerDialogueAsync(const std::string& player_id, const std::string& npc_id, StartDialogueCallback on_complete) {
+    auto* call = new RpcCall<mundusvivens::StartPlayerDialogueResponse>();
+    call->client = this;
+    call->on_complete = [on_complete](bool ok, mundusvivens::StartPlayerDialogueResponse& resp, const grpc::Status& status) {
+        if (ok) {
+            on_complete(resp.success(), resp.session_id(), resp.greeting(), resp.message());
+        } else {
+            on_complete(false, "", "", "gRPC error: " + status.error_message());
+        }
+    };
+
+    mundusvivens::StartPlayerDialogueRequest request;
+    request.set_player_id(player_id);
+    request.set_npc_id(npc_id);
+
+    call->reader = stub_->PrepareAsyncStartPlayerDialogue(&call->context, request, &cq_);
+    call->reader->StartCall();
+    call->reader->Finish(&call->response, &call->status, (void*)call);
+}
+
+void AsyncGrpcClient::SendPlayerMessageAsync(const std::string& session_id, const std::string& message, SendMessageCallback on_complete) {
+    auto* call = new RpcCall<mundusvivens::SendPlayerMessageResponse>();
+    call->client = this;
+    call->on_complete = [on_complete](bool ok, mundusvivens::SendPlayerMessageResponse& resp, const grpc::Status& status) {
+        if (ok) {
+            on_complete(true, resp.reply());
+        } else {
+            on_complete(false, "gRPC error: " + status.error_message());
+        }
+    };
+
+    mundusvivens::SendPlayerMessageRequest request;
+    request.set_session_id(session_id);
+    request.set_message(message);
+
+    call->reader = stub_->PrepareAsyncSendPlayerMessage(&call->context, request, &cq_);
+    call->reader->StartCall();
+    call->reader->Finish(&call->response, &call->status, (void*)call);
+}
+
+void AsyncGrpcClient::EndPlayerDialogueAsync(const std::string& session_id, EndDialogueCallback on_complete) {
+    auto* call = new RpcCall<mundusvivens::EndPlayerDialogueResponse>();
+    call->client = this;
+    call->on_complete = [on_complete](bool ok, mundusvivens::EndPlayerDialogueResponse& resp, const grpc::Status& status) {
+        if (ok) {
+            on_complete(resp.success(), resp.summary());
+        } else {
+            on_complete(false, "gRPC error: " + status.error_message());
+        }
+    };
+
+    mundusvivens::EndPlayerDialogueRequest request;
+    request.set_session_id(session_id);
+
+    call->reader = stub_->PrepareAsyncEndPlayerDialogue(&call->context, request, &cq_);
+    call->reader->StartCall();
+    call->reader->Finish(&call->response, &call->status, (void*)call);
+}
+
 } // namespace MundusVivens
+

@@ -49,3 +49,12 @@ void SystemCooldownSweep(entt::registry& reg, int tick, std::map<std::string, in
 
 void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& client);
 
+// 🆕 플레이어 및 클라이언트 네트워크 연동 시스템
+class TcpServer;
+void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
+                          MundusVivens::AsyncGrpcClient& async_client, int tick,
+                          std::vector<PendingDialogue>& pendingDialogues);
+
+void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick);
+
+

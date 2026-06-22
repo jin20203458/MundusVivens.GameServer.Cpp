@@ -17,6 +17,9 @@ public:
     using TickCallback = std::function<void(bool success, const std::string& message, const std::vector<std::string>& busy_agent_ids)>;
     using DialogueCallback = std::function<void(bool success, const DialogueResult& result)>;
     using StatusCallback = std::function<void(bool success, int32_t updated_count, const std::string& message)>;
+    using StartDialogueCallback = std::function<void(bool success, const std::string& session_id, const std::string& greeting, const std::string& message)>;
+    using SendMessageCallback = std::function<void(bool success, const std::string& reply)>;
+    using EndDialogueCallback = std::function<void(bool success, const std::string& summary)>;
 
     AsyncGrpcClient(const std::string& address);
     ~AsyncGrpcClient();
@@ -25,6 +28,12 @@ public:
     void TriggerDialogueAsync(const std::string& agent_id_a, const std::string& agent_id_b, DialogueCallback on_complete);
     void PollDialogueResultAsync(const std::string& task_id, DialogueCallback on_complete);
     void BatchUpdateStatusAsync(const std::vector<AgentStatusUpdate>& updates, StatusCallback on_complete);
+
+    // 🆕 플레이어 상호작용 관련 비동기 gRPC
+    void StartPlayerDialogueAsync(const std::string& player_id, const std::string& npc_id, StartDialogueCallback on_complete);
+    void SendPlayerMessageAsync(const std::string& session_id, const std::string& message, SendMessageCallback on_complete);
+    void EndPlayerDialogueAsync(const std::string& session_id, EndDialogueCallback on_complete);
+
 
     // 메인 루프에서 매 틱마다 호출하여 완료된 RPC 결과를 디스패치
     void DrainCompletedResults();

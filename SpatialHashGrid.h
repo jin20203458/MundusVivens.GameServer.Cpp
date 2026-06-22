@@ -12,10 +12,15 @@ public:
     void Remove(entt::entity e, uint32_t zone_id);
     const std::vector<entt::entity>& GetEntitiesInZone(uint32_t zone_id) const;
     const std::unordered_map<uint32_t, std::vector<entt::entity>>& AllZones() const { return zone_entities_; }
+    
+    // 🆕 엔티티의 현재 Zone ID 조회 (O(1))
+    uint32_t GetEntityZone(entt::entity e) const;
 
 private:
     std::unordered_map<std::string, uint32_t> name_to_zone_;
     std::unordered_map<uint32_t, std::vector<entt::entity>> zone_entities_;
+    std::unordered_map<entt::entity, uint32_t> entity_to_zone_; // 🆕 최적화를 위한 역방향 인덱스
     uint32_t next_zone_id_ = 1; // 0은 유효하지 않거나 기본값으로 사용 가능
     static const std::vector<entt::entity> empty_;
 };
+
