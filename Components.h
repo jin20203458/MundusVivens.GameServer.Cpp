@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
+#include <entt/entt.hpp>
 
 // NPC 식별 정보 (NpcIds, NpcNames 대체)
 struct IdentityComp {
@@ -59,5 +61,17 @@ struct BusyTag {};
 // 접속한 플레이어를 나타내는 태그 컴포넌트
 struct PlayerTag {
     uint32_t session_index = 0;  // TcpServer의 세션 인덱스 (패킷 전송용)
+};
+
+// 플레이어-NPC 대화 상태를 관리하는 컴포넌트
+struct PlayerDialogueComp {
+    std::string session_id;       // C# AI 서버가 발급한 플레이어 대화 세션 ID
+    entt::entity npc_entity = entt::null; // 대화 상대 NPC 엔티티 핸들
+};
+
+// 역방향 인덱스 리소스 (EnTT registry.ctx()에 저장용)
+struct EntityIndex {
+    std::unordered_map<std::string, entt::entity> by_npc_id;       // "npc_eva" -> entity
+    std::unordered_map<uint32_t, entt::entity>    by_session_index; // 세션 번호 -> entity
 };
 

@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <unordered_map>
 #include <entt/entt.hpp>
 #include "PacketProtocol.h"
 
@@ -38,6 +39,9 @@ public:
     // 특정 세션에 패킷 전송 (Thread-safe)
     void SendTo(uint32_t session_index, uint16_t packet_id, const std::string& payload);
 
+    // 특정 세션 객체 획득 (Thread-safe)
+    std::shared_ptr<ClientSession> GetSession(uint32_t session_index);
+
     // 메인 루프에서 호출: 쌓여 있는 플레이어 명령어 리스트를 가져오고 큐를 비움 (Thread-safe)
     std::vector<PlayerCommand> DrainPlayerCommands();
 
@@ -56,7 +60,7 @@ private:
     boost::asio::ip::tcp::acceptor acceptor_;
 
     std::mutex sessions_mutex_;
-    std::vector<std::shared_ptr<ClientSession>> sessions_;
+    std::unordered_map<uint32_t, std::shared_ptr<ClientSession>> sessions_;
     uint32_t next_session_id_ = 1;
 
     std::mutex commands_mutex_;

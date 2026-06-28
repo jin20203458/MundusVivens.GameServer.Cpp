@@ -2,6 +2,7 @@
 #include "TcpServer.h"
 #include "mundus_vivens.pb.h"
 #include <iostream>
+#include <chrono>
 #include <boost/asio/write.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -24,7 +25,16 @@ ClientSession::~ClientSession() {
 boost::asio::awaitable<void> ClientSession::Run() {
     auto self = shared_from_this(); // 비동기 작업 중 객체 수명 보장
     try {
+        // Nagle 알고리즘 비활성화 (저지연 최적화 - Task F-1)
+        socket_.set_option(boost::asio::ip::tcp::no_delay(true));
+
         while (true) {
+            // 백프레셔 흐름 제어 활성화 시 코루틴 일시 정지 (Task F-2)
+            while (is_reading_suspended_) {
+                boost::asio::steady_timer timer(socket_.get_executor(), std::chrono::milliseconds(50));
+                co_await timer.async_wait(boost::asio::use_awaitable);
+            }
+
             // 1. 헤더 4바이트 수신
             uint8_t header_buf[HEADER_SIZE];
             co_await boost::asio::async_read(
@@ -41,19 +51,29 @@ boost::asio::awaitable<void> ClientSession::Run() {
                 break;
             }
 
-            // 2. 페이로드 수신
             size_t payload_size = length - HEADER_SIZE;
-            std::vector<uint8_t> payload(payload_size);
-            if (payload_size > 0) {
+            
+            // Small Buffer Optimization (SBO): 256바이트 이하는 스택 버퍼 활용하여 힙 할당 Zero화 (Task F-3)
+            static constexpr size_t SBO_SIZE = 256;
+            if (payload_size <= SBO_SIZE) {
+                alignas(16) uint8_t stack_buf[SBO_SIZE];
+                if (payload_size > 0) {
+                    co_await boost::asio::async_read(
+                        socket_, 
+                        boost::asio::buffer(stack_buf, payload_size), 
+                        boost::asio::use_awaitable
+                    );
+                }
+                HandlePacket(packet_id, stack_buf, payload_size);
+            } else {
+                std::vector<uint8_t> heap_buf(payload_size);
                 co_await boost::asio::async_read(
                     socket_, 
-                    boost::asio::buffer(payload.data(), payload_size), 
+                    boost::asio::buffer(heap_buf.data(), payload_size), 
                     boost::asio::use_awaitable
                 );
+                HandlePacket(packet_id, heap_buf.data(), payload_size);
             }
-
-            // 3. 패킷 핸들링
-            HandlePacket(packet_id, payload);
         }
     } catch (const std::exception& e) {
         std::cout << "[ClientSession] 세션 수신 루프 예외 발생 (인덱스: " << index_ 
@@ -137,8 +157,8 @@ boost::asio::awaitable<void> ClientSession::WriteLoop() {
     }
 }
 
-void ClientSession::HandlePacket(uint16_t packet_id, const std::vector<uint8_t>& payload) {
-    std::string payload_str(payload.begin(), payload.end());
+void ClientSession::HandlePacket(uint16_t packet_id, const uint8_t* payload, size_t size) {
+    std::string payload_str(payload, payload + size);
 
     PlayerCommand cmd;
     cmd.session_index = index_;
@@ -180,7 +200,7 @@ void ClientSession::HandlePacket(uint16_t packet_id, const std::vector<uint8_t>&
             break;
         }
         case PacketId::CS_HEARTBEAT: {
-            // 하트비트 수신 시 즉시 ACK 전송 (별도 로직 없이 소켓 연결 유지 목적)
+            // 하트비트 수신 시 즉시 ACK 전송
             Send(PacketId::SC_HEARTBEAT_ACK, "");
             break;
         }

@@ -2,11 +2,13 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <thread>
-#include <mutex>
 #include <functional>
-#include <atomic>
 #include <grpcpp/grpcpp.h>
+#include <agrpc/asio_grpc.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include "mundus_vivens.grpc.pb.h"
 #include "MundusVivensClient.h"
 
@@ -21,7 +23,10 @@ public:
     using SendMessageCallback = std::function<void(bool success, const std::string& reply)>;
     using EndDialogueCallback = std::function<void(bool success, const std::string& summary)>;
 
-    AsyncGrpcClient(const std::string& address);
+    // 생성자에서 채널, GrpcContext, io_context를 모두 공유받음
+    AsyncGrpcClient(std::shared_ptr<grpc::Channel> channel,
+                    agrpc::GrpcContext& grpc_context,
+                    boost::asio::io_context& io_context);
     ~AsyncGrpcClient();
 
     void ProcessWorldTickAsync(int32_t tick, TickCallback on_complete);
@@ -29,56 +34,25 @@ public:
     void PollDialogueResultAsync(const std::string& task_id, DialogueCallback on_complete);
     void BatchUpdateStatusAsync(const std::vector<AgentStatusUpdate>& updates, StatusCallback on_complete);
 
-    // 🆕 플레이어 상호작용 관련 비동기 gRPC
+    // 플레이어 상호작용 관련 비동기 gRPC
     void StartPlayerDialogueAsync(const std::string& player_id, const std::string& npc_id, StartDialogueCallback on_complete);
     void SendPlayerMessageAsync(const std::string& session_id, const std::string& message, SendMessageCallback on_complete);
     void EndPlayerDialogueAsync(const std::string& session_id, EndDialogueCallback on_complete);
 
-
-    // 메인 루프에서 매 틱마다 호출하여 완료된 RPC 결과를 디스패치
-    void DrainCompletedResults();
+    // ❌ DrainCompletedResults() 함수 삭제 (스레드 병합 및 자동 이벤트 디스패치로 불필요)
 
 private:
-    struct AsyncRpcTag {
-        virtual ~AsyncRpcTag() = default;
-        virtual void HandleCompletion(bool ok) = 0;
-    };
-
-    template <typename TResp>
-    struct RpcCall : public AsyncRpcTag {
-        grpc::ClientContext context;
-        grpc::Status status;
-        TResp response;
-        std::unique_ptr<grpc::ClientAsyncResponseReader<TResp>> reader;
-        std::function<void(bool ok, TResp& resp, const grpc::Status& status)> on_complete;
-        AsyncGrpcClient* client;
-
-        void HandleCompletion(bool ok) override {
-            // RpcCall 객체가 백그라운드 스레드 루프에서 즉시 delete 되므로,
-            // 호출에 필요한 데이터들을 값 복사하여 디스패치 큐로 전달함으로써 Use-After-Free를 원천 방지합니다.
-            auto local_on_complete = this->on_complete;
-            auto local_response = this->response;
-            auto local_status = this->status;
-
-            client->QueueCallback([local_on_complete, ok, local_response, local_status]() {
-                if (local_on_complete) {
-                    auto resp_copy = local_response;
-                    local_on_complete(ok && local_status.ok(), resp_copy, local_status);
-                }
-            });
-        }
-    };
-
-    void QueueCallback(std::function<void()> cb);
-    void WorkerLoop();
+    boost::asio::awaitable<void> DoProcessWorldTick(int32_t tick, TickCallback on_complete);
+    boost::asio::awaitable<void> DoTriggerDialogue(std::string agent_id_a, std::string agent_id_b, DialogueCallback on_complete);
+    boost::asio::awaitable<void> DoPollDialogueResult(std::string task_id, DialogueCallback on_complete);
+    boost::asio::awaitable<void> DoBatchUpdateStatus(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete);
+    boost::asio::awaitable<void> DoStartPlayerDialogue(std::string player_id, std::string npc_id, StartDialogueCallback on_complete);
+    boost::asio::awaitable<void> DoSendPlayerMessage(std::string session_id, std::string message, SendMessageCallback on_complete);
+    boost::asio::awaitable<void> DoEndPlayerDialogue(std::string session_id, EndDialogueCallback on_complete);
 
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;
-    grpc::CompletionQueue cq_;
-    std::thread cq_worker_;
-    std::atomic<bool> shutting_down_;
-
-    std::mutex result_mutex_;
-    std::vector<std::function<void()>> completed_callbacks_;
+    agrpc::GrpcContext& grpc_ctx_;
+    boost::asio::io_context& io_ctx_;
 };
 
 } // namespace MundusVivens

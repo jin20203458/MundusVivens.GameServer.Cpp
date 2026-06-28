@@ -4,10 +4,7 @@
 
 namespace MundusVivens {
 
-    MundusVivensClient::MundusVivensClient(const std::string& server_address) {
-        // Kestrel gRPC 서버와의 로컬 통신을 위해 보안 인증서가 없는 비보안(Insecure) 채널을 개설합니다.
-        auto channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
-
+    MundusVivensClient::MundusVivensClient(std::shared_ptr<grpc::Channel> channel) {
         // 프로토콜 버퍼로 자동 생성된 인프라 스텁(Stub) 인스턴스를 생성하여 멤버 변수에 바인딩합니다.
         stub_ = mundusvivens::MundusVivensGrpc::NewStub(channel);
     }

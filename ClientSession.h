@@ -24,9 +24,29 @@ public:
     const std::string& GetPlayerId() const { return player_id_; }
     void SetPlayerId(const std::string& id) { player_id_ = id; }
 
+    // 백프레셔 흐름 제어 API
+    void IncrementPendingGrpc() {
+        pending_grpc_requests_++;
+        CheckBackpressure();
+    }
+    void DecrementPendingGrpc() {
+        if (pending_grpc_requests_ > 0) {
+            pending_grpc_requests_--;
+        }
+        CheckBackpressure();
+    }
+
 private:
+    void CheckBackpressure() {
+        if (pending_grpc_requests_ >= 32) {
+            is_reading_suspended_ = true;
+        } else if (pending_grpc_requests_ <= 8) {
+            is_reading_suspended_ = false;
+        }
+    }
+
     // 수신된 로우 패킷을 처리하여 큐에 명령어로 파싱 및 삽입
-    void HandlePacket(uint16_t packet_id, const std::vector<uint8_t>& payload);
+    void HandlePacket(uint16_t packet_id, const uint8_t* payload, size_t size);
 
     // 비동기 전송 처리
     boost::asio::awaitable<void> WriteLoop();
@@ -35,6 +55,10 @@ private:
     TcpServer& server_;
     uint32_t index_;
     std::string player_id_;
+
+    // 백프레셔 흐름 제어 상태
+    size_t pending_grpc_requests_ = 0;
+    bool is_reading_suspended_ = false;
 
     // 전송 큐 및 동기화 락
     std::mutex write_mutex_;

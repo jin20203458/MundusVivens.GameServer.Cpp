@@ -74,8 +74,8 @@ struct AgentStatusUpdate {
 
 class MundusVivensClient {
 public:
-    // C# AI 서버의 gRPC 엔드포인트(예: "localhost:5001")를 전달받아 클라이언트를 생성합니다.
-    MundusVivensClient(const std::string& server_address);
+    // C# AI 서버의 공유 gRPC 채널을 전달받아 클라이언트를 생성합니다.
+    MundusVivensClient(std::shared_ptr<grpc::Channel> channel);
 
     // NPC 간 대화를 트리거합니다.
     // wait_for_completion이 true이면 대화가 끝날 때까지 대기(동기적)하며 결과를 반환합니다.

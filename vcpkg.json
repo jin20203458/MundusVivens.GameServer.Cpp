@@ -5,6 +5,7 @@
     "grpc",
     "protobuf",
     "entt",
-    "boost-asio"
+    "boost-asio",
+    "asio-grpc"
   ]
 }

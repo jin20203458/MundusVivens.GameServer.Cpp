@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(EnTT CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
+find_package(asio-grpc REQUIRED)
 
 
 # MSVC 한글 인코딩 에러 방지 (/utf-8 flag)
@@ -104,4 +105,5 @@ target_link_libraries(MundusVivensGameServer PRIVATE
     protobuf::libprotobuf
     EnTT::EnTT
     Boost::system
+    asio-grpc::asio-grpc
 )

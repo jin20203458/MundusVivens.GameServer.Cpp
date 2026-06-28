@@ -54,7 +54,7 @@ boost::asio::awaitable<void> TcpServer::AcceptLoop() {
 
 void TcpServer::BroadcastPacket(uint16_t packet_id, const std::string& payload) {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
-    for (auto& session : sessions_) {
+    for (auto& [index, session] : sessions_) {
         if (session) {
             session->Send(packet_id, payload);
         }
@@ -63,12 +63,19 @@ void TcpServer::BroadcastPacket(uint16_t packet_id, const std::string& payload) 
 
 void TcpServer::SendTo(uint32_t session_index, uint16_t packet_id, const std::string& payload) {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
-    for (auto& session : sessions_) {
-        if (session && session->GetIndex() == session_index) {
-            session->Send(packet_id, payload);
-            break;
-        }
+    auto it = sessions_.find(session_index);
+    if (it != sessions_.end() && it->second) {
+        it->second->Send(packet_id, payload);
     }
+}
+
+std::shared_ptr<ClientSession> TcpServer::GetSession(uint32_t session_index) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    auto it = sessions_.find(session_index);
+    if (it != sessions_.end()) {
+        return it->second;
+    }
+    return nullptr;
 }
 
 std::vector<PlayerCommand> TcpServer::DrainPlayerCommands() {
@@ -79,20 +86,17 @@ std::vector<PlayerCommand> TcpServer::DrainPlayerCommands() {
 }
 
 void TcpServer::RegisterSession(std::shared_ptr<ClientSession> session) {
+    if (!session) return;
     std::lock_guard<std::mutex> lock(sessions_mutex_);
-    sessions_.push_back(session);
+    sessions_[session->GetIndex()] = session;
     std::cout << "[TCP Server] 세션 등록 완료. 현재 세션 수: " << sessions_.size() << std::endl;
 }
 
 void TcpServer::UnregisterSession(uint32_t session_index) {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
-    auto it = std::remove_if(sessions_.begin(), sessions_.end(),
-        [session_index](const std::shared_ptr<ClientSession>& session) {
-            return session && session->GetIndex() == session_index;
-        });
-    
+    auto it = sessions_.find(session_index);
     if (it != sessions_.end()) {
-        sessions_.erase(it, sessions_.end());
+        sessions_.erase(it);
         std::cout << "[TCP Server] 세션 제거 완료 (인덱스: " << session_index 
                   << "). 현재 세션 수: " << sessions_.size() << std::endl;
     }
