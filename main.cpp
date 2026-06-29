@@ -153,12 +153,14 @@ int main() {
         // 1. Boost.Asio I/O 이벤트 처리 (소켓 수신 및 gRPC 완료 콜백 메인스레드 재개 디스패치 - Task E)
         io.poll();
 
-        // 2. 매 프레임(50ms)마다 플레이어 패킷 명령어 즉각 처리 (이동, 대화 메시지 등)
+        // 2. 연결 끊김 감지 및 대화 즉각 정리 시스템
+        SystemCleanupDisconnectedPlayerDialogues(registry, tcp_server, async_client);
+
+        // 3. 매 프레임(50ms)마다 플레이어 패킷 명령어 즉각 처리 (이동, 대화 메시지 등)
         SystemPlayerCommands(registry, spatial_grid, tcp_server, async_client, tick);
 
-        // 3. 틱 동기화가 완료된 경우, 메인 프레임 동기화 타이밍에 맞추어 모든 시스템 결정론적 순차 실행 (Task G)
-        if (tick_synced_ready) {
-            tick_synced_ready = false;
+        // 4. 틱 동기화가 완료된 경우, 메인 프레임 동기화 타이밍에 맞추어 모든 시스템 결정론적 순차 실행 (Task G)
+        if (tick_synced_ready.exchange(false)) {
             tick = next_tick_val;
             busyAgentIdsFromCSharp.clear();
             busyAgentIdsFromCSharp.insert(temp_busy_agent_ids.begin(), temp_busy_agent_ids.end());

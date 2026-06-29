@@ -27,39 +27,39 @@ void AsyncGrpcClient::ProcessWorldTickAsync(int32_t tick, TickCallback on_comple
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::TriggerDialogueAsync(const std::string& agent_id_a, const std::string& agent_id_b, DialogueCallback on_complete) {
+void AsyncGrpcClient::TriggerDialogueAsync(std::string agent_id_a, std::string agent_id_b, DialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoTriggerDialogue(agent_id_a, agent_id_b, std::move(on_complete)),
+        DoTriggerDialogue(std::move(agent_id_a), std::move(agent_id_b), std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::PollDialogueResultAsync(const std::string& task_id, DialogueCallback on_complete) {
+void AsyncGrpcClient::PollDialogueResultAsync(std::string task_id, DialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoPollDialogueResult(task_id, std::move(on_complete)),
+        DoPollDialogueResult(std::move(task_id), std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::BatchUpdateStatusAsync(const std::vector<AgentStatusUpdate>& updates, StatusCallback on_complete) {
+void AsyncGrpcClient::BatchUpdateStatusAsync(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoBatchUpdateStatus(updates, std::move(on_complete)),
+        DoBatchUpdateStatus(std::move(updates), std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::StartPlayerDialogueAsync(const std::string& player_id, const std::string& npc_id, StartDialogueCallback on_complete) {
+void AsyncGrpcClient::StartPlayerDialogueAsync(std::string player_id, std::string npc_id, StartDialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoStartPlayerDialogue(player_id, npc_id, std::move(on_complete)),
+        DoStartPlayerDialogue(std::move(player_id), std::move(npc_id), std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::SendPlayerMessageAsync(const std::string& session_id, const std::string& message, SendMessageCallback on_complete) {
+void AsyncGrpcClient::SendPlayerMessageAsync(std::string session_id, std::string message, SendPlayerMessageCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoSendPlayerMessage(session_id, message, std::move(on_complete)),
+        DoSendPlayerMessage(std::move(session_id), std::move(message), std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::EndPlayerDialogueAsync(const std::string& session_id, EndDialogueCallback on_complete) {
+void AsyncGrpcClient::EndPlayerDialogueAsync(std::string session_id, EndDialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoEndPlayerDialogue(session_id, std::move(on_complete)),
+        DoEndPlayerDialogue(std::move(session_id), std::move(on_complete)),
         boost::asio::detached);
 }
 
@@ -69,6 +69,7 @@ void AsyncGrpcClient::EndPlayerDialogueAsync(const std::string& session_id, EndD
 
 boost::asio::awaitable<void> AsyncGrpcClient::DoProcessWorldTick(int32_t tick, TickCallback on_complete) {
     try {
+        // agrpc::ClientRPC 를 사용하여 비동기 gRPC 요청을 준비하고 전송합니다
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncProcessWorldTick>;
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
@@ -82,10 +83,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoProcessWorldTick(int32_t tick, T
         );
 
         if (status.ok()) {
-            std::vector<std::string> busy_ids;
-            for (int i = 0; i < response.busy_agent_ids_size(); ++i) {
-                busy_ids.push_back(response.busy_agent_ids(i));
-            }
+            std::vector<std::string> busy_ids(response.busy_agent_ids().begin(), response.busy_agent_ids().end());
             on_complete(response.success(), response.message(), busy_ids);
         } else {
             on_complete(false, "gRPC error: " + status.error_message(), {});
@@ -120,23 +118,23 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::string agen
             result.completed_immediately = response.completed_immediately();
             result.dialogue_summary = response.dialogue_summary();
             result.is_completed = response.completed_immediately();
-            for (int i = 0; i < response.dialogue_lines_size(); ++i) {
-                result.dialogue_lines.push_back(response.dialogue_lines(i));
-            }
+            result.dialogue_lines.assign(response.dialogue_lines().begin(), response.dialogue_lines().end());
+            result.structured_lines.reserve(response.structured_lines_size());
             for (int i = 0; i < response.structured_lines_size(); ++i) {
                 const auto& proto_line = response.structured_lines(i);
-                DialogueLine line;
-                line.speaker_id = proto_line.speaker_id();
-                line.speaker_name = proto_line.speaker_name();
-                line.text = proto_line.text();
-                result.structured_lines.push_back(line);
+                result.structured_lines.push_back(DialogueLine{
+                    proto_line.speaker_id(),
+                    proto_line.speaker_name(),
+                    proto_line.text()
+                });
             }
+            result.emotion_updates.reserve(response.emotion_updates_size());
             for (int i = 0; i < response.emotion_updates_size(); ++i) {
                 const auto& proto_update = response.emotion_updates(i);
-                AgentEmotionUpdate update;
-                update.agent_id = proto_update.agent_id();
-                update.new_emotion = proto_update.new_emotion();
-                result.emotion_updates.push_back(update);
+                result.emotion_updates.push_back(AgentEmotionUpdate{
+                    proto_update.agent_id(),
+                    proto_update.new_emotion()
+                });
             }
             on_complete(true, result);
         } else {
@@ -169,21 +167,24 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoPollDialogueResult(std::string t
             result.is_completed = response.is_completed();
             result.dialogue_summary = response.dialogue_summary();
             if (result.is_completed) {
+                result.structured_lines.reserve(response.lines_size());
+                result.dialogue_lines.reserve(response.lines_size());
                 for (int i = 0; i < response.lines_size(); ++i) {
                     const auto& proto_line = response.lines(i);
-                    DialogueLine line;
-                    line.speaker_id = proto_line.speaker_id();
-                    line.speaker_name = proto_line.speaker_name();
-                    line.text = proto_line.text();
-                    result.structured_lines.push_back(line);
+                    result.structured_lines.push_back(DialogueLine{
+                        proto_line.speaker_id(),
+                        proto_line.speaker_name(),
+                        proto_line.text()
+                    });
                     result.dialogue_lines.push_back(proto_line.speaker_name() + ": " + proto_line.text());
                 }
+                result.emotion_updates.reserve(response.emotion_updates_size());
                 for (int i = 0; i < response.emotion_updates_size(); ++i) {
                     const auto& proto_update = response.emotion_updates(i);
-                    AgentEmotionUpdate update;
-                    update.agent_id = proto_update.agent_id();
-                    update.new_emotion = proto_update.new_emotion();
-                    result.emotion_updates.push_back(update);
+                    result.emotion_updates.push_back(AgentEmotionUpdate{
+                        proto_update.agent_id(),
+                        proto_update.new_emotion()
+                    });
                 }
             }
             on_complete(true, result);
@@ -253,7 +254,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoStartPlayerDialogue(std::string 
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoSendPlayerMessage(std::string session_id, std::string message, SendMessageCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoSendPlayerMessage(std::string session_id, std::string message, SendPlayerMessageCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncSendPlayerMessage>;
         grpc::ClientContext context;

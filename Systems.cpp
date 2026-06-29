@@ -478,7 +478,48 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
     }
 }
 
-// 7. 플레이어 커맨드 처리 시스템 구현
+// 7. 연결 끊긴 플레이어의 대화 정리 시스템 구현
+void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+    std::vector<entt::entity> to_cleanup;
+    auto view = reg.view<PlayerTag, PlayerDialogueComp>();
+    for (auto entity : view) {
+        const auto& tag = view.get<PlayerTag>(entity);
+        if (tcp.GetSession(tag.session_index) == nullptr) {
+            to_cleanup.push_back(entity);
+        }
+    }
+
+    for (auto player_ent : to_cleanup) {
+        const auto& pdc = reg.get<PlayerDialogueComp>(player_ent);
+        
+        std::cout << "⚠️ [네트워크 끊김 감지] 플레이어 세션(" << reg.get<PlayerTag>(player_ent).session_index 
+                  << ") 연결 끊김 확인. 강제로 대화(Session: " << pdc.session_id 
+                  << ")를 종료하고 NPC를 해방합니다." << std::endl;
+
+        // 1. C# AI 서버에 종료 신호 전송 (비동기)
+        async_client.EndPlayerDialogueAsync(pdc.session_id, [](bool success, const std::string& summary) {
+            std::cout << "💬 [비정상 종료 대화 정리 완료] C# AI 서버 대화 종료 응답 수신: " << summary << std::endl;
+        });
+
+        // 2. NPC 상태 정상 복귀
+        if (reg.valid(pdc.npc_entity)) {
+            if (reg.all_of<ActivityComp>(pdc.npc_entity)) {
+                reg.get<ActivityComp>(pdc.npc_entity).current_activity = "대기";
+            }
+            if (reg.all_of<BusyTag>(pdc.npc_entity)) {
+                reg.erase<BusyTag>(pdc.npc_entity);
+            }
+        }
+
+        // 3. 플레이어 본인의 BusyTag 및 대화 컴포넌트 제거
+        if (reg.all_of<BusyTag>(player_ent)) {
+            reg.erase<BusyTag>(player_ent);
+        }
+        reg.erase<PlayerDialogueComp>(player_ent);
+    }
+}
+
+// 8. 플레이어 커맨드 처리 시스템 구현
 void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
                           MundusVivens::AsyncGrpcClient& async_client, int tick) {
     std::vector<PlayerCommand> commands = tcp.DrainPlayerCommands();
@@ -605,6 +646,16 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
 
             if (npc_ent == entt::null) {
                 std::cerr << "❌ [플레이어 대화 에러] NPC를 찾을 수 없음: " << req.npc_id() << std::endl;
+                continue;
+            }
+
+            if (player_ent == npc_ent) {
+                std::cerr << "❌ [플레이어 대화 에러] 자기 자신과는 대화할 수 없습니다." << std::endl;
+                continue;
+            }
+
+            if (reg.all_of<PlayerTag>(npc_ent)) {
+                std::cerr << "❌ [플레이어 대화 에러] 다른 플레이어와는 AI 대화를 진행할 수 없습니다." << std::endl;
                 continue;
             }
 
@@ -751,7 +802,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
     }
 }
 
-// 8. 월드 상태 스냅샷 클라이언트 브로드캐스트 시스템 구현
+// 9. 월드 상태 스냅샷 클라이언트 브로드캐스트 시스템 구현
 void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick) {
     mundusvivens::WorldSnapshotPayload payload;
     payload.set_tick(tick);
