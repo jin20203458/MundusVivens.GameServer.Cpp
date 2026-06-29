@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <entt/entt.hpp>
 #include "PacketProtocol.h"
@@ -59,7 +60,7 @@ private:
     boost::asio::io_context& io_;
     boost::asio::ip::tcp::acceptor acceptor_;
 
-    std::mutex sessions_mutex_;
+    std::shared_mutex sessions_mutex_;
     std::unordered_map<uint32_t, std::shared_ptr<ClientSession>> sessions_;
     uint32_t next_session_id_ = 1;
 
