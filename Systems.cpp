@@ -7,12 +7,6 @@
 #include <algorithm>
 #include <unordered_set>
 
-// 헬퍼 함수: 정렬된 복합 키를 생성해 주는 함수 (중복 등록 방지용)
-// 문자열 불필요 복사(D-4)를 최소화한 최적화 버전
-std::string GetCooldownKey(const std::string& a, const std::string& b) {
-    return (a > b) ? (b + ":" + a) : (a + ":" + b);
-}
-
 // 헬퍼 함수: NPC가 현재 진행 중인 활동(Activity)에 집중하여 대화를 피할 확률을 계산
 bool IsNPCFocusedOnActivity(const std::string& activity, double roll) {
     if (activity.find("취침") != std::string::npos || activity.find("휴식") != std::string::npos) {
@@ -31,56 +25,43 @@ bool IsNPCFocusedOnActivity(const std::string& activity, double roll) {
 void SystemUpdateBusyState(entt::registry& reg,
                            const std::unordered_map<std::string, PendingDialogue>& pendings,
                            const std::unordered_set<std::string>& busyAgentIdsFromCSharp) {
-    // 모든 엔티티의 BusyTag를 해제/부착하기 위한 바쁜 엔티티 해시셋 수집
-    std::unordered_set<entt::entity> busy_entities;
+    // 1. 기존의 바쁨 상태 모두 초기화 (O(M_old))
+    reg.clear<BusyTag>();
 
-    // 1. 진행 중인 비동기 대화(NPC 간)에 참여 중인 NPC 수집
+    // 2. 비동기 대화 중인 NPC 바쁨 상태 부여
     for (const auto& [task_id, pd] : pendings) {
-        if (reg.valid(pd.npc_a)) busy_entities.insert(pd.npc_a);
-        if (reg.valid(pd.npc_b)) busy_entities.insert(pd.npc_b);
+        if (reg.valid(pd.npc_a) && !reg.all_of<BusyTag>(pd.npc_a)) reg.emplace<BusyTag>(pd.npc_a);
+        if (reg.valid(pd.npc_b) && !reg.all_of<BusyTag>(pd.npc_b)) reg.emplace<BusyTag>(pd.npc_b);
     }
 
-    // 2. 플레이어와 대화 중인 NPC 및 플레이어 수집 (PlayerDialogueComp 활용)
+    // 3. 플레이어 대화 중인 NPC & 플레이어 바쁨 상태 부여
     auto player_dialogue_view = reg.view<PlayerDialogueComp>();
     player_dialogue_view.each([&](entt::entity player_ent, const PlayerDialogueComp& pdc) {
-        busy_entities.insert(player_ent);
-        if (reg.valid(pdc.npc_entity)) {
-            busy_entities.insert(pdc.npc_entity);
+        if (!reg.all_of<BusyTag>(player_ent)) reg.emplace<BusyTag>(player_ent);
+        if (reg.valid(pdc.npc_entity) && !reg.all_of<BusyTag>(pdc.npc_entity)) {
+            reg.emplace<BusyTag>(pdc.npc_entity);
         }
     });
 
-    // 3. C#에서 직접 바쁨 상태로 지정한 NPC 수집 (EntityIndex O(1) 활용)
+    // 4. C#에서 직접 바쁨 상태로 지정한 NPC 바쁨 상태 부여
     if (reg.ctx().contains<EntityIndex>()) {
         const auto& entity_index = reg.ctx().get<EntityIndex>();
         for (const auto& npc_id : busyAgentIdsFromCSharp) {
             auto it = entity_index.by_npc_id.find(npc_id);
             if (it != entity_index.by_npc_id.end()) {
-                busy_entities.insert(it->second);
+                if (!reg.all_of<BusyTag>(it->second)) {
+                    reg.emplace<BusyTag>(it->second);
+                }
             }
         }
     }
-
-    // 4. BusyTag 일괄 업데이트
-    auto identity_view = reg.view<IdentityComp>();
-    identity_view.each([&](entt::entity e, const IdentityComp&) {
-        bool is_busy = busy_entities.count(e) > 0;
-        if (is_busy) {
-            if (!reg.all_of<BusyTag>(e)) {
-                reg.emplace<BusyTag>(e);
-            }
-        } else {
-            if (reg.all_of<BusyTag>(e)) {
-                reg.erase<BusyTag>(e);
-            }
-        }
-    });
 }
 
 // 1. 감정 쇠퇴 처리 시스템
 void SystemEmotionDecay(entt::registry& reg) {
     // BusyTag가 부착된 NPC는 감정 쇠퇴 연산에서 아예 배제 (O(1) 필터링)
     auto view = reg.view<EmotionComp, IdentityComp>(entt::exclude<BusyTag>);
-    view.each([&](entt::entity entity, EmotionComp& emo, IdentityComp& identity) {
+    view.each([&](EmotionComp& emo, IdentityComp& identity) {
         if (emo.decay_ticks_remaining > 0) {
             emo.decay_ticks_remaining--;
             if (emo.decay_ticks_remaining == 0) {
@@ -103,6 +84,8 @@ void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int curr
 
     view.each([&](entt::entity entity, LocationComp& loc, ActivityComp& act, ScheduleComp& sched, IdentityComp& identity) {
         // 대화 중이거나 바쁜 NPC는 이동 제한 (BusyTag 검사 O(1))
+        // TODO: 만약 하단의 디버그 로그가 불필요해진다면, 뷰 생성 단계에서 entt::exclude<BusyTag>를 사용하여 
+        // 람다 함수 진입 오버헤드 자체를 생략하는 것이 성능상 더욱 좋습니다.
         if (reg.all_of<BusyTag>(entity)) {
             std::cout << "💬 [이동 제한] " << identity.display_name << "은(는) 대화 중이므로 이동할 수 없습니다. 위치 유지: [" 
                       << loc.location_name << "]" << std::endl;
@@ -131,7 +114,7 @@ void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int curr
             uint32_t new_zone = grid.GetOrCreateZoneId(target_location);
             loc.zone_id = new_zone;
 
-            if (target_location != old_loc) {
+            if (new_zone != old_zone) {
                 grid.Move(entity, old_zone, new_zone);
                 std::cout << "🏃 [스케줄 이동] " << identity.display_name << " 이동함: [" << old_loc << "] ➔ [" 
                           << target_location << "] (행동: " << scheduled_activity << ")" << std::endl;
@@ -153,8 +136,8 @@ void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int curr
 // 3. 비동기 대화 결과 수거 시스템
 void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
                                MundusVivens::AsyncGrpcClient& client, int tick,
-                               std::unordered_map<std::string, PendingDialogue>& pendingDialogues,
-                               std::unordered_map<std::string, int>& dialogueCooldowns) {
+                               std::unordered_map<std::string, PendingDialogue>& pendingDialogues) {
+
     for (auto it = pendingDialogues.begin(); it != pendingDialogues.end(); ) {
         const auto& pd = it->second;
         // [기아 방지] 10틱(50초) 이상 완료 응답이 없으면 타임아웃 강제 해제
@@ -178,13 +161,6 @@ void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
                 cooldown.global_cooldown_until = tick + 3;
             }
 
-            if (reg.valid(pd.npc_a) && reg.valid(pd.npc_b)) {
-                std::string id_a = reg.get<IdentityComp>(pd.npc_a).npc_id;
-                std::string id_b = reg.get<IdentityComp>(pd.npc_b).npc_id;
-                std::string cooldown_key = GetCooldownKey(id_a, id_b);
-                dialogueCooldowns[cooldown_key] = tick + 3;
-            }
-
             // BusyTag 해제
             if (reg.valid(pd.npc_a) && reg.all_of<BusyTag>(pd.npc_a)) reg.erase<BusyTag>(pd.npc_a);
             if (reg.valid(pd.npc_b) && reg.all_of<BusyTag>(pd.npc_b)) reg.erase<BusyTag>(pd.npc_b);
@@ -197,7 +173,7 @@ void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
             it->second.poll_requested = true;
             std::string task_id = it->first;
             
-            client.PollDialogueResultAsync(task_id, [&reg, &pendingDialogues, &dialogueCooldowns, task_id, tick](bool success, const MundusVivens::DialogueResult& result) {
+            client.PollDialogueResultAsync(task_id, [&reg, &pendingDialogues, task_id, tick](bool success, const MundusVivens::DialogueResult& result) {
                 auto pd_it = pendingDialogues.find(task_id);
                 if (pd_it == pendingDialogues.end()) return; // 이미 타임아웃 등으로 삭제됨
 
@@ -289,13 +265,6 @@ void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
                         if (reg.all_of<BusyTag>(pd_val.npc_b)) reg.erase<BusyTag>(pd_val.npc_b);
                     }
 
-                    if (reg.valid(pd_val.npc_a) && reg.valid(pd_val.npc_b)) {
-                        std::string id_a = reg.get<IdentityComp>(pd_val.npc_a).npc_id;
-                        std::string id_b = reg.get<IdentityComp>(pd_val.npc_b).npc_id;
-                        std::string cooldown_key = GetCooldownKey(id_a, id_b);
-                        dialogueCooldowns[cooldown_key] = tick + 5;
-                    }
-
                     pendingDialogues.erase(pd_it);
                 } else {
                     pd_it->second.poll_requested = false;
@@ -314,15 +283,21 @@ void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
 void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
                                   std::unordered_map<std::string, PendingDialogue>& pendingDialogues,
-                                  const std::unordered_map<std::string, int>& dialogueCooldowns,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis) {
     // 공간 해시 그리드의 각 zone을 순회
     for (const auto& [zone_id, entities] : grid.AllZones()) {
         if (entities.size() < 2) continue; // 혼자 있는 구역은 건너뜀
 
-        for (size_t i = 0; i < entities.size(); ++i) {
-            entt::entity ent_a = entities[i];
+        // 구역 내 NPC 순서를 무작위로 섞어서 앞 순서 독식 편향 제거
+        std::vector<entt::entity> shuffled_entities = entities;
+        std::shuffle(shuffled_entities.begin(), shuffled_entities.end(), gen);
+
+        for (size_t i = 0; i < shuffled_entities.size(); ++i) {
+            entt::entity ent_a = shuffled_entities[i];
             if (!reg.valid(ent_a)) continue;
+
+            // 플레이어는 자동 대화 트리거 검사에서 제외 (ActivityComp 누락으로 인한 크래시 방지)
+            if (reg.all_of<PlayerTag>(ent_a)) continue;
 
             // BusyTag O(1) 확인
             if (reg.all_of<BusyTag>(ent_a)) continue;
@@ -334,9 +309,17 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
             const auto& act_a = reg.get<ActivityComp>(ent_a);
             const auto& identity_a = reg.get<IdentityComp>(ent_a);
 
-            for (size_t j = i + 1; j < entities.size(); ++j) {
-                entt::entity ent_b = entities[j];
+            // 60% 대화 발동 확률 상한선 게이트 (대화 확률이 인원 수에 비례하되 최대 60%로 수렴하도록 제어)
+            if (dis(gen) >= 0.6) {
+                continue; // 40% 확률로 이번 틱에는 대화를 시도하지 않음
+            }
+
+            for (size_t j = i + 1; j < shuffled_entities.size(); ++j) {
+                entt::entity ent_b = shuffled_entities[j];
                 if (!reg.valid(ent_b)) continue;
+
+                // 플레이어는 자동 대화 트리거 검사에서 제외
+                if (reg.all_of<PlayerTag>(ent_b)) continue;
 
                 if (reg.all_of<BusyTag>(ent_b)) continue;
 
@@ -346,13 +329,6 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
 
                 const auto& act_b = reg.get<ActivityComp>(ent_b);
                 const auto& identity_b = reg.get<IdentityComp>(ent_b);
-
-                // 두 NPC 간 쿨다운 검사
-                std::string cooldown_key = GetCooldownKey(identity_a.npc_id, identity_b.npc_id);
-                auto cd_it = dialogueCooldowns.find(cooldown_key);
-                if (cd_it != dialogueCooldowns.end() && tick < cd_it->second) {
-                    continue;
-                }
 
                 // 현재 활동에 몰입하고 있어 대화를 거부하는지 체크
                 double rollA = dis(gen);
@@ -422,20 +398,12 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
     }
 }
 
-// 5. 만료된 쿨다운 청소 시스템
-void SystemCooldownSweep(entt::registry& reg, int tick, std::unordered_map<std::string, int>& dialogueCooldowns) {
-    for (auto it = dialogueCooldowns.begin(); it != dialogueCooldowns.end(); ) {
-        if (tick >= it->second) {
-            it = dialogueCooldowns.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
+
 
 // 6. 변경 상태 배치 gRPC 동기화 시스템
 void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& client) {
     std::vector<MundusVivens::AgentStatusUpdate> updates;
+    std::vector<entt::entity> target_entities;
     auto view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp, LastSyncedComp>();
 
     view.each([&](entt::entity entity, IdentityComp& identity, LocationComp& loc, EmotionComp& emo, ActivityComp& act, LastSyncedComp& sync) {
@@ -446,28 +414,21 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
             update.emotion = emo.current_emotion;
             update.activity = act.current_activity;
             updates.push_back(update);
+            target_entities.push_back(entity);
         }
     });
 
     if (!updates.empty()) {
-        // 비동기 콜백 캡처 시 std::move 적용(D-5)
-        client.BatchUpdateStatusAsync(updates, [&reg, updates = std::move(updates)](bool success, int32_t updated_count, const std::string& message) {
+        // 비동기 콜백 캡처 시 std::move 적용(D-5) 및 target_entities 병렬 캡처 적용
+        client.BatchUpdateStatusAsync(updates, [&reg, target_entities = std::move(target_entities), updates = std::move(updates)](bool success, int32_t updated_count, const std::string& message) {
             if (success) {
-                if (reg.ctx().contains<EntityIndex>()) {
-                    const auto& entity_index = reg.ctx().get<EntityIndex>();
-                    for (const auto& update : updates) {
-                        entt::entity target_ent = entt::null;
-                        auto idx_it = entity_index.by_npc_id.find(update.agent_id);
-                        if (idx_it != entity_index.by_npc_id.end()) {
-                            target_ent = idx_it->second;
-                        }
-
-                        if (reg.valid(target_ent) && reg.all_of<LastSyncedComp>(target_ent)) {
-                            auto& sync = reg.get<LastSyncedComp>(target_ent);
-                            sync.location = update.location;
-                            sync.emotion = update.emotion;
-                            sync.activity = update.activity;
-                        }
+                for (size_t i = 0; i < updates.size(); ++i) {
+                    entt::entity target_ent = target_entities[i];
+                    if (reg.valid(target_ent) && reg.all_of<LastSyncedComp>(target_ent)) {
+                        auto& sync = reg.get<LastSyncedComp>(target_ent);
+                        sync.location = updates[i].location;
+                        sync.emotion = updates[i].emotion;
+                        sync.activity = updates[i].activity;
                     }
                 }
                 std::cout << "🔄 [gRPC-Batch 비동기 완료] " << message << " (업데이트 개수: " << updated_count << ")" << std::endl;
@@ -482,12 +443,11 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
 void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
     std::vector<entt::entity> to_cleanup;
     auto view = reg.view<PlayerTag, PlayerDialogueComp>();
-    for (auto entity : view) {
-        const auto& tag = view.get<PlayerTag>(entity);
+    view.each([&](entt::entity entity, const PlayerTag& tag, const PlayerDialogueComp&) {
         if (tcp.GetSession(tag.session_index) == nullptr) {
             to_cleanup.push_back(entity);
         }
-    }
+    });
 
     for (auto player_ent : to_cleanup) {
         const auto& pdc = reg.get<PlayerDialogueComp>(player_ent);
@@ -575,22 +535,15 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             resp.add_locations("성당");
 
             // 현재 NPC 전체 상태 추가
-            auto npc_view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>();
-            for (auto entity : npc_view) {
-                if (reg.all_of<PlayerTag>(entity)) continue; // 플레이어는 제외
-                
-                const auto& npc_id = npc_view.get<IdentityComp>(entity);
-                const auto& npc_loc = npc_view.get<LocationComp>(entity);
-                const auto& npc_emo = npc_view.get<EmotionComp>(entity);
-                const auto& npc_act = npc_view.get<ActivityComp>(entity);
-
+            auto npc_view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>(entt::exclude<PlayerTag>);
+            npc_view.each([&](const IdentityComp& npc_id, const LocationComp& npc_loc, const EmotionComp& npc_emo, const ActivityComp& npc_act) {
                 auto* snapshot = resp.add_npcs();
                 snapshot->set_npc_id(npc_id.npc_id);
                 snapshot->set_display_name(npc_id.display_name);
                 snapshot->set_location(npc_loc.location_name);
                 snapshot->set_emotion(npc_emo.current_emotion);
                 snapshot->set_activity(npc_act.current_activity);
-            }
+            });
 
             std::string serialized;
             if (resp.SerializeToString(&serialized)) {
@@ -807,22 +760,15 @@ void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick)
     mundusvivens::WorldSnapshotPayload payload;
     payload.set_tick(tick);
 
-    auto view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>();
-    for (auto entity : view) {
-        if (reg.all_of<PlayerTag>(entity)) continue; // 플레이어는 제외
-
-        const auto& identity = view.get<IdentityComp>(entity);
-        const auto& loc = view.get<LocationComp>(entity);
-        const auto& emo = view.get<EmotionComp>(entity);
-        const auto& act = view.get<ActivityComp>(entity);
-
+    auto view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>(entt::exclude<PlayerTag>);
+    view.each([&](const IdentityComp& identity, const LocationComp& loc, const EmotionComp& emo, const ActivityComp& act) {
         auto* snapshot = payload.add_npcs();
         snapshot->set_npc_id(identity.npc_id);
         snapshot->set_display_name(identity.display_name);
         snapshot->set_location(loc.location_name);
         snapshot->set_emotion(emo.current_emotion);
         snapshot->set_activity(act.current_activity);
-    }
+    });
 
     std::string serialized;
     if (payload.SerializeToString(&serialized)) {

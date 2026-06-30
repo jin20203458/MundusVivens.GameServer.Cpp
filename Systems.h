@@ -19,8 +19,6 @@ struct PendingDialogue {
 };
 
 // 헬퍼 함수들
-std::string GetCooldownKey(const std::string& a, const std::string& b);
-
 bool IsNPCFocusedOnActivity(const std::string& activity, double roll);
 
 // 바쁨 상태 동기화 시스템 (IsNpcBusy 대체)
@@ -35,16 +33,12 @@ void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int curr
 
 void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
                                MundusVivens::AsyncGrpcClient& client, int tick,
-                               std::unordered_map<std::string, PendingDialogue>& pendingDialogues,
-                               std::unordered_map<std::string, int>& dialogueCooldowns);
+                               std::unordered_map<std::string, PendingDialogue>& pendingDialogues);
 
 void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
                                   std::unordered_map<std::string, PendingDialogue>& pendingDialogues,
-                                  const std::unordered_map<std::string, int>& dialogueCooldowns,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis);
-
-void SystemCooldownSweep(entt::registry& reg, int tick, std::unordered_map<std::string, int>& dialogueCooldowns);
 
 void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& client);
 

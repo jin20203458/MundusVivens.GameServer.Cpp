@@ -135,7 +135,6 @@ int main() {
     int tick = 0; // 동기화 완료된 마지막 틱
     std::unordered_map<std::string, PendingDialogue> pendingDialogues;
     std::unordered_set<std::string> busyAgentIdsFromCSharp;
-    std::unordered_map<std::string, int> dialogueCooldowns;
 
     bool is_first_loop = true;
     bool is_tick_sync_pending = false;
@@ -208,13 +207,12 @@ int main() {
             SystemScheduleMovement(registry, spatial_grid, tick);
 
             // 비동기 대화 결과 수거 및 데이터 반영
-            SystemPollDialogueResults(registry, spatial_grid, async_client, tick, pendingDialogues, dialogueCooldowns);
+            SystemPollDialogueResults(registry, spatial_grid, async_client, tick, pendingDialogues);
 
             // 동일 공간 인접 검사 및 새 대화 비동기 트리거
-            SystemSpatialDialogueTrigger(registry, spatial_grid, async_client, tick, pendingDialogues, dialogueCooldowns, gen, dis);
+            SystemSpatialDialogueTrigger(registry, spatial_grid, async_client, tick, pendingDialogues, gen, dis);
 
-            // 만료 쿨다운 청소 및 네트워크 동기화
-            SystemCooldownSweep(registry, tick, dialogueCooldowns);
+            // 네트워크 동기화
             SystemNetworkSync(registry, async_client);
 
             // 월드 상태 스냅샷 클라이언트 브로드캐스트
