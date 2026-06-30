@@ -47,3 +47,13 @@ inline void WriteU16BE(uint8_t* dest, uint16_t val) {
     dest[0] = static_cast<uint8_t>(val >> 8);
     dest[1] = static_cast<uint8_t>(val & 0xFF);
 }
+
+// 락프리 큐 적재용 Trivially Copyable POD 패킷 버퍼 구조체 (하이브리드 SBO)
+struct PacketBuffer {
+    uint32_t size = 0;
+    bool is_heap = false;
+    union {
+        uint8_t inline_data[256]; // 소형 패킷용 인라인 배열 (95% 패킷)
+        uint8_t* heap_data;       // 대형 패킷용 힙 주소 포인터
+    };
+};

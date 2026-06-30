@@ -153,7 +153,7 @@ int main() {
         io.poll();
 
         // 2. 연결 끊김 감지 및 대화 즉각 정리 시스템
-        SystemCleanupDisconnectedPlayerDialogues(registry, tcp_server, async_client);
+        SystemCleanupDisconnectedPlayerDialogues(registry, spatial_grid, tcp_server, async_client);
 
         // 3. 매 프레임(50ms)마다 플레이어 패킷 명령어 즉각 처리 (이동, 대화 메시지 등)
         SystemPlayerCommands(registry, spatial_grid, tcp_server, async_client, tick);

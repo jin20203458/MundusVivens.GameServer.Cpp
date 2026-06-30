@@ -44,7 +44,7 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
 
 // 플레이어 및 클라이언트 네트워크 연동 시스템
 class TcpServer;
-void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client);
+void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client);
 
 void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
                           MundusVivens::AsyncGrpcClient& async_client, int tick);

@@ -6,6 +6,8 @@
 #include <iostream>
 #include <algorithm>
 #include <unordered_set>
+#include <array>
+#include <string_view>
 
 // 헬퍼 함수: NPC가 현재 진행 중인 활동(Activity)에 집중하여 대화를 피할 확률을 계산
 bool IsNPCFocusedOnActivity(const std::string& activity, double roll) {
@@ -19,6 +21,29 @@ bool IsNPCFocusedOnActivity(const std::string& activity, double roll) {
     }
     // 그 외 활동 시에는 30% 확률로 몰입하여 대화 거부
     return roll < 0.3;
+}
+
+// Protobuf 메시지 직렬화 및 전송을 위한 템플릿 헬퍼 (송신 Zero-Allocation)
+template <typename T>
+inline bool SendProto(TcpServer& tcp, uint32_t session_index, uint16_t packet_id, const T& message) {
+    thread_local static std::array<uint8_t, MAX_PACKET_SIZE> buffer;
+    size_t size = message.ByteSizeLong();
+    if (size > MAX_PACKET_SIZE || !message.SerializeToArray(buffer.data(), static_cast<int>(size))) {
+        return false;
+    }
+    tcp.SendTo(session_index, packet_id, buffer.data(), size);
+    return true;
+}
+
+template <typename T>
+inline bool BroadcastProto(TcpServer& tcp, uint16_t packet_id, const T& message) {
+    thread_local static std::array<uint8_t, MAX_PACKET_SIZE> buffer;
+    size_t size = message.ByteSizeLong();
+    if (size > MAX_PACKET_SIZE || !message.SerializeToArray(buffer.data(), static_cast<int>(size))) {
+        return false;
+    }
+    tcp.BroadcastPacket(packet_id, buffer.data(), size);
+    return true;
 }
 
 // 바쁨 상태 동기화 시스템 (IsNpcBusy 대체)
@@ -439,60 +464,80 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
     }
 }
 
-// 7. 연결 끊긴 플레이어의 대화 정리 시스템 구현
-void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+// 7. 연결 끊긴 플레이어의 대화 및 좀비 엔티티 정리 시스템 구현
+void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
     std::vector<entt::entity> to_cleanup;
-    auto view = reg.view<PlayerTag, PlayerDialogueComp>();
-    view.each([&](entt::entity entity, const PlayerTag& tag, const PlayerDialogueComp&) {
+    auto view = reg.view<PlayerTag>();
+    view.each([&](entt::entity entity, const PlayerTag& tag) {
         if (tcp.GetSession(tag.session_index) == nullptr) {
             to_cleanup.push_back(entity);
         }
     });
 
+    if (to_cleanup.empty()) return;
+
+    auto& index = reg.ctx().get<EntityIndex>();
+
     for (auto player_ent : to_cleanup) {
-        const auto& pdc = reg.get<PlayerDialogueComp>(player_ent);
-        
-        std::cout << "⚠️ [네트워크 끊김 감지] 플레이어 세션(" << reg.get<PlayerTag>(player_ent).session_index 
-                  << ") 연결 끊김 확인. 강제로 대화(Session: " << pdc.session_id 
-                  << ")를 종료하고 NPC를 해방합니다." << std::endl;
+        const auto& tag = reg.get<PlayerTag>(player_ent);
+        std::cout << "⚠️ [네트워크 끊김 감지] 플레이어 세션(" << tag.session_index 
+                  << ") 연결 끊김 확인. 강제 정리를 시작합니다." << std::endl;
 
-        // 1. C# AI 서버에 종료 신호 전송 (비동기)
-        async_client.EndPlayerDialogueAsync(pdc.session_id, [](bool success, const std::string& summary) {
-            std::cout << "💬 [비정상 종료 대화 정리 완료] C# AI 서버 대화 종료 응답 수신: " << summary << std::endl;
-        });
+        // 대화 중이었던 경우 대화 종료 및 NPC 해방
+        if (reg.all_of<PlayerDialogueComp>(player_ent)) {
+            const auto& pdc = reg.get<PlayerDialogueComp>(player_ent);
+            std::cout << "  - 진행 중이던 대화(Session: " << pdc.session_id << ")를 종료하고 NPC를 해방합니다." << std::endl;
 
-        // 2. NPC 상태 정상 복귀
-        if (reg.valid(pdc.npc_entity)) {
-            if (reg.all_of<ActivityComp>(pdc.npc_entity)) {
-                reg.get<ActivityComp>(pdc.npc_entity).current_activity = "대기";
-            }
-            if (reg.all_of<BusyTag>(pdc.npc_entity)) {
-                reg.erase<BusyTag>(pdc.npc_entity);
+            // C# AI 서버에 종료 신호 전송 (비동기)
+            async_client.EndPlayerDialogueAsync(pdc.session_id, [](bool success, const std::string& summary) {
+                std::cout << "💬 [비정상 종료 대화 정리 완료] C# AI 서버 대화 종료 응답 수신: " << summary << std::endl;
+            });
+
+            // NPC 상태 정상 복귀
+            if (reg.valid(pdc.npc_entity)) {
+                if (reg.all_of<ActivityComp>(pdc.npc_entity)) {
+                    reg.get<ActivityComp>(pdc.npc_entity).current_activity = "대기";
+                }
+                if (reg.all_of<BusyTag>(pdc.npc_entity)) {
+                    reg.erase<BusyTag>(pdc.npc_entity);
+                }
             }
         }
 
-        // 3. 플레이어 본인의 BusyTag 및 대화 컴포넌트 제거
-        if (reg.all_of<BusyTag>(player_ent)) {
-            reg.erase<BusyTag>(player_ent);
+        // Spatial Hash Grid에서 플레이어 삭제
+        if (reg.all_of<LocationComp>(player_ent)) {
+            const auto& loc = reg.get<LocationComp>(player_ent);
+            grid.Remove(player_ent, loc.zone_id);
         }
-        reg.erase<PlayerDialogueComp>(player_ent);
+
+        // EntityIndex 맵핑 소거
+        index.by_session_index.erase(tag.session_index);
+        if (reg.all_of<IdentityComp>(player_ent)) {
+            index.by_npc_id.erase(reg.get<IdentityComp>(player_ent).npc_id);
+        }
+
+        // 플레이어 엔티티 완전 제거 (좀비 방지)
+        reg.destroy(player_ent);
+        std::cout << "👤 [플레이어 제거 완료] 좀비 엔티티 및 리소스 삭제 완료." << std::endl;
     }
 }
 
 // 8. 플레이어 커맨드 처리 시스템 구현
 void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
                           MundusVivens::AsyncGrpcClient& async_client, int tick) {
-    std::vector<PlayerCommand> commands = tcp.DrainPlayerCommands();
+    static std::vector<PlayerCommand> local_commands;
+    tcp.DrainPlayerCommands(local_commands);
+    
     auto& index = reg.ctx().get<EntityIndex>();
 
-    for (const auto& cmd : commands) {
+    for (const auto& cmd : local_commands) {
         if (cmd.type == PlayerCommand::Login) {
             mundusvivens::LoginRequest req;
-            if (!req.ParseFromString(cmd.payload)) continue;
+            if (!req.ParseFromArray(cmd.payload.data(), static_cast<int>(cmd.payload.size()))) continue;
 
             // 플레이어 검색 혹은 신규 생성 (EntityIndex O(1) 활용)
             entt::entity player_ent = entt::null;
-            auto it = index.by_npc_id.find(cmd.player_id);
+            auto it = index.by_npc_id.find(req.player_id());
             if (it != index.by_npc_id.end()) {
                 player_ent = it->second;
             }
@@ -500,14 +545,14 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             if (player_ent == entt::null) {
                 player_ent = reg.create();
                 reg.emplace<PlayerTag>(player_ent, cmd.session_index);
-                reg.emplace<IdentityComp>(player_ent, cmd.player_id, req.player_name());
+                reg.emplace<IdentityComp>(player_ent, req.player_id(), req.player_name());
                 reg.emplace<LocationComp>(player_ent, 0u, "광장");
                 reg.emplace<LastSyncedComp>(player_ent);
 
-                index.by_npc_id[cmd.player_id] = player_ent;
+                index.by_npc_id[req.player_id()] = player_ent;
                 index.by_session_index[cmd.session_index] = player_ent;
 
-                std::cout << "👤 [플레이어 로그인] 신규 플레이어 등록: " << req.player_name() << " (ID: " << cmd.player_id << ")" << std::endl;
+                std::cout << "👤 [플레이어 로그인] 신규 플레이어 등록: " << req.player_name() << " (ID: " << req.player_id() << ")" << std::endl;
             } else {
                 // 재접속 시 세션 인덱스 최신화
                 uint32_t old_session = reg.get<PlayerTag>(player_ent).session_index;
@@ -545,14 +590,11 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
                 snapshot->set_activity(npc_act.current_activity);
             });
 
-            std::string serialized;
-            if (resp.SerializeToString(&serialized)) {
-                tcp.SendTo(cmd.session_index, PacketId::SC_LOGIN_ACK, serialized);
-            }
+            SendProto(tcp, cmd.session_index, PacketId::SC_LOGIN_ACK, resp);
         }
         else if (cmd.type == PlayerCommand::Move) {
             mundusvivens::PlayerMoveRequest req;
-            if (!req.ParseFromString(cmd.payload)) continue;
+            if (!req.ParseFromArray(cmd.payload.data(), static_cast<int>(cmd.payload.size()))) continue;
 
             entt::entity player_ent = entt::null;
             auto it = index.by_session_index.find(cmd.session_index);
@@ -579,7 +621,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
         }
         else if (cmd.type == PlayerCommand::TalkToNpc) {
             mundusvivens::TalkToNpcRequest req;
-            if (!req.ParseFromString(cmd.payload)) continue;
+            if (!req.ParseFromArray(cmd.payload.data(), static_cast<int>(cmd.payload.size()))) continue;
 
             entt::entity player_ent = entt::null;
             auto it = index.by_session_index.find(cmd.session_index);
@@ -589,6 +631,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
 
             if (player_ent == entt::null) continue;
             const auto& player_loc = reg.get<LocationComp>(player_ent);
+            const auto& player_identity = reg.get<IdentityComp>(player_ent);
 
             // 대화 대상 NPC 엔티티 검색 (O(1) 해시 맵 검색)
             entt::entity npc_ent = entt::null;
@@ -641,7 +684,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             auto session = tcp.GetSession(session_idx);
             if (session) session->IncrementPendingGrpc();
 
-            async_client.StartPlayerDialogueAsync(cmd.player_id, req.npc_id(), 
+            async_client.StartPlayerDialogueAsync(player_identity.npc_id, req.npc_id(), 
                 [&reg, tcp_addr = &tcp, session_idx, npc_name, npc_ent, player_ent, session](bool success, const std::string& session_id, const std::string& greeting, const std::string& message) {
                     if (session) session->DecrementPendingGrpc();
                     if (success) {
@@ -658,10 +701,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
                         reply.set_npc_name(npc_name);
                         reply.set_reply_text(greeting);
 
-                        std::string serialized;
-                        if (reply.SerializeToString(&serialized)) {
-                            tcp_addr->SendTo(session_idx, PacketId::SC_NPC_REPLY, serialized);
-                        }
+                        SendProto(*tcp_addr, session_idx, PacketId::SC_NPC_REPLY, reply);
                     } else {
                         std::cerr << "❌ [플레이어 대화 실패] 대화 세션을 생성하지 못했습니다. 사유: " << message << std::endl;
                         if (reg.valid(npc_ent)) {
@@ -677,7 +717,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
         }
         else if (cmd.type == PlayerCommand::PlayerMessage) {
             mundusvivens::PlayerMessageRequest req;
-            if (!req.ParseFromString(cmd.payload)) continue;
+            if (!req.ParseFromArray(cmd.payload.data(), static_cast<int>(cmd.payload.size()))) continue;
 
             uint32_t session_idx = cmd.session_index;
             entt::entity player_ent = entt::null;
@@ -707,10 +747,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
                         reply.set_npc_name(npc_name);
                         reply.set_reply_text(reply_text);
 
-                        std::string serialized;
-                        if (reply.SerializeToString(&serialized)) {
-                            tcp_addr->SendTo(session_idx, PacketId::SC_NPC_REPLY, serialized);
-                        }
+                        SendProto(*tcp_addr, session_idx, PacketId::SC_NPC_REPLY, reply);
                     } else {
                         std::cerr << "❌ [플레이어 메시지 전송 실패] 대화 응답 전송 실패" << std::endl;
                     }
@@ -719,7 +756,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
         }
         else if (cmd.type == PlayerCommand::EndDialogue) {
             mundusvivens::EndDialogueRequest req;
-            if (!req.ParseFromString(cmd.payload)) continue;
+            if (!req.ParseFromArray(cmd.payload.data(), static_cast<int>(cmd.payload.size()))) continue;
 
             uint32_t session_idx = cmd.session_index;
             entt::entity player_ent = entt::null;
@@ -770,8 +807,5 @@ void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick)
         snapshot->set_activity(act.current_activity);
     });
 
-    std::string serialized;
-    if (payload.SerializeToString(&serialized)) {
-        tcp.BroadcastPacket(PacketId::SC_WORLD_SNAPSHOT, serialized);
-    }
+    BroadcastProto(tcp, PacketId::SC_WORLD_SNAPSHOT, payload);
 }

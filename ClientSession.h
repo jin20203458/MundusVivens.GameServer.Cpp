@@ -1,10 +1,12 @@
 #pragma once
 #include <boost/asio.hpp>
+#include <boost/lockfree/spsc_queue.hpp>
 #include <memory>
 #include <vector>
 #include <string>
-#include <deque>
-#include <mutex>
+#include <string_view>
+#include <array>
+#include <atomic>
 #include "PacketProtocol.h"
 
 class TcpServer;
@@ -18,11 +20,9 @@ public:
     boost::asio::awaitable<void> Run();
 
     // 클라이언트에게 패킷 전송 (스레드 안전)
-    void Send(uint16_t packet_id, const std::string& payload);
+    void Send(uint16_t packet_id, const uint8_t* payload, size_t size);
 
     uint32_t GetIndex() const { return index_; }
-    const std::string& GetPlayerId() const { return player_id_; }
-    void SetPlayerId(const std::string& id) { player_id_ = id; }
 
     // 백프레셔 흐름 제어 API
     void IncrementPendingGrpc() {
@@ -38,10 +38,16 @@ public:
 
 private:
     void CheckBackpressure() {
+        bool was_suspended = is_reading_suspended_;
         if (pending_grpc_requests_ >= 32) {
             is_reading_suspended_ = true;
         } else if (pending_grpc_requests_ <= 8) {
             is_reading_suspended_ = false;
+        }
+
+        // 백프레셔가 해제되었고 대기 중이었다면 타이머를 취소하여 코루틴을 즉시 깨움 (Zero-polling)
+        if (!is_reading_suspended_ && was_suspended) {
+            backpressure_timer_.cancel();
         }
     }
 
@@ -54,14 +60,13 @@ private:
     boost::asio::ip::tcp::socket socket_;
     TcpServer& server_;
     uint32_t index_;
-    std::string player_id_;
 
     // 백프레셔 흐름 제어 상태
-    size_t pending_grpc_requests_ = 0;
-    bool is_reading_suspended_ = false;
+    std::atomic<size_t> pending_grpc_requests_{0};
+    std::atomic<bool> is_reading_suspended_{false};
+    boost::asio::steady_timer backpressure_timer_;
 
-    // 전송 큐 및 동기화 락
-    std::mutex write_mutex_;
-    std::deque<std::vector<uint8_t>> write_queue_;
-    bool is_writing_ = false;
+    // 전송 큐 (락프리 SPSC Queue)
+    boost::lockfree::spsc_queue<PacketBuffer, boost::lockfree::capacity<1024>> write_queue_;
+    std::atomic<bool> is_writing_{false};
 };

@@ -27,8 +27,9 @@ void TcpServer::Start() {
 }
 
 boost::asio::awaitable<void> TcpServer::AcceptLoop() {
-    try {
-        while (is_running_) {
+    while (is_running_) {
+        bool has_error = false;
+        try {
             // 비동기로 클라이언트 연결 대기 및 수락
             boost::asio::ip::tcp::socket socket = co_await acceptor_.async_accept(boost::asio::use_awaitable);
             
@@ -46,26 +47,34 @@ boost::asio::awaitable<void> TcpServer::AcceptLoop() {
 
             // 해당 세션의 비동기 수신 루프를 코루틴으로 구동
             boost::asio::co_spawn(io_, session->Run(), boost::asio::detached);
+        } catch (const std::exception& e) {
+            std::cerr << "[TCP Server] Accept 루프 예외 발생: " << e.what() 
+                      << ". 1초 대기 후 복구를 시도합니다." << std::endl;
+            has_error = true;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "[TCP Server] Accept 루프 예외 발생: " << e.what() << std::endl;
+
+        // co_await은 catch 블록 외부에서만 수행 가능 (C++20 코루틴 제약)
+        if (has_error) {
+            boost::asio::steady_timer delay_timer(io_, std::chrono::seconds(1));
+            co_await delay_timer.async_wait(boost::asio::use_awaitable);
+        }
     }
 }
 
-void TcpServer::BroadcastPacket(uint16_t packet_id, const std::string& payload) {
+void TcpServer::BroadcastPacket(uint16_t packet_id, const uint8_t* payload, size_t size) {
     std::shared_lock<std::shared_mutex> lock(sessions_mutex_);
     for (auto& [index, session] : sessions_) {
         if (session) {
-            session->Send(packet_id, payload);
+            session->Send(packet_id, payload, size);
         }
     }
 }
 
-void TcpServer::SendTo(uint32_t session_index, uint16_t packet_id, const std::string& payload) {
+void TcpServer::SendTo(uint32_t session_index, uint16_t packet_id, const uint8_t* payload, size_t size) {
     std::shared_lock<std::shared_mutex> lock(sessions_mutex_);
     auto it = sessions_.find(session_index);
     if (it != sessions_.end() && it->second) {
-        it->second->Send(packet_id, payload);
+        it->second->Send(packet_id, payload, size);
     }
 }
 
@@ -78,11 +87,10 @@ std::shared_ptr<ClientSession> TcpServer::GetSession(uint32_t session_index) {
     return nullptr;
 }
 
-std::vector<PlayerCommand> TcpServer::DrainPlayerCommands() {
+void TcpServer::DrainPlayerCommands(std::vector<PlayerCommand>& out) {
+    out.clear();
     std::lock_guard<std::mutex> lock(commands_mutex_);
-    std::vector<PlayerCommand> commands = std::move(pending_commands_);
-    pending_commands_.clear();
-    return commands;
+    pending_commands_.swap(out);
 }
 
 void TcpServer::RegisterSession(std::shared_ptr<ClientSession> session) {

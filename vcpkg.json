@@ -6,6 +6,7 @@
     "protobuf",
     "entt",
     "boost-asio",
+    "boost-lockfree",
     "asio-grpc"
   ]
 }

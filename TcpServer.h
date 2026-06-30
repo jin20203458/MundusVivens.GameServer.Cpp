@@ -3,9 +3,11 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
+#include <boost/container/small_vector.hpp>
 #include <entt/entt.hpp>
 #include "PacketProtocol.h"
 
@@ -19,8 +21,7 @@ struct PlayerCommand {
         EndDialogue 
     };
     Type type;
-    std::string player_id;
-    std::string payload;     // 직렬화된 Protobuf 메시지 데이터
+    boost::container::small_vector<uint8_t, 64> payload; // 소형 패킷의 힙 할당 방지
     uint32_t session_index;  // 발신 클라이언트의 세션 인덱스
 };
 
@@ -35,16 +36,16 @@ public:
     void Start();
 
     // 접속 중인 모든 클라이언트에 패킷 브로드캐스트 (Thread-safe)
-    void BroadcastPacket(uint16_t packet_id, const std::string& payload);
+    void BroadcastPacket(uint16_t packet_id, const uint8_t* payload, size_t size);
 
     // 특정 세션에 패킷 전송 (Thread-safe)
-    void SendTo(uint32_t session_index, uint16_t packet_id, const std::string& payload);
+    void SendTo(uint32_t session_index, uint16_t packet_id, const uint8_t* payload, size_t size);
 
     // 특정 세션 객체 획득 (Thread-safe)
     std::shared_ptr<ClientSession> GetSession(uint32_t session_index);
 
-    // 메인 루프에서 호출: 쌓여 있는 플레이어 명령어 리스트를 가져오고 큐를 비움 (Thread-safe)
-    std::vector<PlayerCommand> DrainPlayerCommands();
+    // 메인 루프에서 호출: 쌓여 있는 플레이어 명령어 리스트를 가져오고 큐를 비움 (Thread-safe, double buffering)
+    void DrainPlayerCommands(std::vector<PlayerCommand>& out);
 
     // 세션 등록 및 해제 (ClientSession에서 호출)
     void RegisterSession(std::shared_ptr<ClientSession> session);
