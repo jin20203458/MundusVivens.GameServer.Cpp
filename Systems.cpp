@@ -699,7 +699,7 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                     }
 
                     // 비동기 트리거 호출
-                    client.TriggerDialogueAsync(group_ids, [&grpc_queue, &pendingDialogues, group_participants, tick, loc_name, participant_names_str](bool success, const MundusVivens::DialogueResult& result) {
+                    client.TriggerDialogueAsync(std::move(group_ids), [&grpc_queue, &pendingDialogues, group_participants, tick, loc_name, participant_names_str](bool success, const MundusVivens::DialogueResult& result) {
                         grpc_queue.Push([success, result, group_participants, tick, loc_name, participant_names_str, &pendingDialogues](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
                             bool all_valid = true;
                             for (auto ent : group_participants) {
@@ -760,7 +760,8 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
 
     if (!updates.empty()) {
         // 비동기 콜백 캡처 시 std::move 적용(D-5) 및 target_entities 병렬 캡처 적용
-        client.BatchUpdateStatusAsync(updates, [&grpc_queue, target_entities = std::move(target_entities), updates = std::move(updates)](bool success, int32_t updated_count, const std::string& message) {
+        std::vector<MundusVivens::AgentStatusUpdate> updates_for_callback = updates; // 콜백용 명시적 복사
+        client.BatchUpdateStatusAsync(std::move(updates), [&grpc_queue, target_entities = std::move(target_entities), updates = std::move(updates_for_callback)](bool success, int32_t updated_count, const std::string& message) mutable {
             grpc_queue.Push([success, updated_count, message, target_entities = std::move(target_entities), updates = std::move(updates)](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
                 if (success) {
                     for (size_t i = 0; i < updates.size(); ++i) {

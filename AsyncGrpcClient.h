@@ -31,7 +31,7 @@ public:
     ~AsyncGrpcClient();
 
     void ProcessWorldTickAsync(int32_t tick, TickCallback on_complete);
-    void TriggerDialogueAsync(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete);
+    void TriggerDialogueAsync(std::vector<uint32_t> participant_ids, DialogueCallback on_complete);
     void PollDialogueResultAsync(uint64_t task_id, DialogueCallback on_complete);
     void BatchUpdateStatusAsync(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete);
 
@@ -46,7 +46,7 @@ public:
 
 private:
     boost::asio::awaitable<void> DoProcessWorldTick(int32_t tick, TickCallback on_complete);
-    boost::asio::awaitable<void> DoTriggerDialogue(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete);
+    boost::asio::awaitable<void> DoTriggerDialogue(std::vector<uint32_t> participant_ids, DialogueCallback on_complete);
     boost::asio::awaitable<void> DoPollDialogueResult(uint64_t task_id, DialogueCallback on_complete);
     boost::asio::awaitable<void> DoBatchUpdateStatus(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete);
     boost::asio::awaitable<void> DoStartPlayerDialogue(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete);

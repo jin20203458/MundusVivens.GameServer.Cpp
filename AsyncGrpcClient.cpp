@@ -27,9 +27,9 @@ void AsyncGrpcClient::ProcessWorldTickAsync(int32_t tick, TickCallback on_comple
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::TriggerDialogueAsync(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete) {
+void AsyncGrpcClient::TriggerDialogueAsync(std::vector<uint32_t> participant_ids, DialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoTriggerDialogue(participant_ids, std::move(on_complete)),
+        DoTriggerDialogue(std::move(participant_ids), std::move(on_complete)),
         boost::asio::detached);
 }
 
@@ -105,7 +105,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoProcessWorldTick(int32_t tick, T
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint32_t> participant_ids, DialogueCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncTriggerDialogue>;
         grpc::ClientContext context;
