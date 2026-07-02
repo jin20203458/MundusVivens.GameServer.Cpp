@@ -13,36 +13,17 @@
 class TcpServer;
 class GrpcResultQueue;
 
-// 비동기 진행 중인 대화 트래킹을 위한 구조체
-struct PendingDialogue {
-    uint64_t task_id = 0;
-    boost::container::small_vector<entt::entity, 10> participants;
-    int triggered_tick = 0;
-    std::string meeting_location; // 대화 시작 장소 스냅샷
-    bool poll_requested = false;  // 🆕 중복 비동기 폴링을 방지하기 위한 플래그
-};
-
 // 헬퍼 함수들
 bool IsNPCFocusedOnActivity(const std::string& activity, double roll);
-
-// 바쁨 상태 동기화 시스템 (IsNpcBusy 대체)
-void SystemUpdateBusyState(entt::registry& reg,
-                           const std::unordered_map<uint64_t, PendingDialogue>& pendings,
-                           const std::unordered_set<uint32_t>& busyAgentIdsFromCSharp);
 
 // 시스템 함수 정의
 void SystemEmotionDecay(entt::registry& reg);
 
-void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int current_tick);
+void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
-void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
-                               MundusVivens::AsyncGrpcClient& client, int tick,
-                               std::unordered_map<uint64_t, PendingDialogue>& pendingDialogues,
-                               GrpcResultQueue& grpc_queue);
 
 void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
-                                  std::unordered_map<uint64_t, PendingDialogue>& pendingDialogues,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis,
                                   GrpcResultQueue& grpc_queue);
 

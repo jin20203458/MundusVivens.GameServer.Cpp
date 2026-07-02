@@ -94,14 +94,7 @@ public:
     MundusVivensClient(std::shared_ptr<grpc::Channel> channel);
 
     // NPC 간 대화를 트리거합니다.
-    // wait_for_completion이 true이면 대화가 끝날 때까지 대기(동기적)하며 결과를 반환합니다.
     DialogueResult TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b, bool wait_for_completion = true);
-
-    // 🆕 비동기 대화 트리거 (wait_for_completion = false 호출)
-    DialogueResult TriggerDialogueAsync(uint32_t agent_id_a, uint32_t agent_id_b);
-
-    // 🆕 대화 결과 조회 폴링 API
-    DialogueResult PollDialogueResult(uint64_t task_id);
 
     // 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
     AgentStatus GetAgentStatus(uint32_t agent_id);
@@ -109,8 +102,7 @@ public:
     // 에바와 같은 특정 에이전트에게 소문을 강제로 주입합니다.
     bool InjectGossip(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, std::string& out_message);
 
-    // C++ 게임 서버가 결정한 에이전트의 최신 상태(위치, 감정, 현재 상태)를 C# 서버로 동기화합니다.
-    bool UpdateAgentStatus(uint32_t agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message);
+
 
     // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
     bool BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message);
@@ -121,8 +113,20 @@ public:
     // 🆕 월드 부트스트랩 데이터 조회
     WorldBootstrapData GetWorldBootstrap();
 
-    // 🆕 일일 스케줄 데이터 조회 RPC
-    std::vector<DailySchedule> GetDailySchedules(int32_t current_tick);
+
+
+    // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
+    struct JobPayload {
+        uint32_t npc_id;
+        uint64_t job_id;
+        std::string target_location;
+        std::string intent;
+        uint32_t target_agent_id = 0;
+        int32_t priority = 0;
+    };
+
+    std::vector<JobPayload> GetPendingJobs(int32_t current_tick);
+    bool ReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, JobPayload& out_new_job);
 
 private:
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;

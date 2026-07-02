@@ -78,44 +78,7 @@ inline bool BroadcastProto(TcpServer& tcp, uint16_t packet_id, const T& message)
     return true;
 }
 
-// 바쁨 상태 동기화 시스템 (IsNpcBusy 대체)
-void SystemUpdateBusyState(entt::registry& reg,
-                           const std::unordered_map<uint64_t, PendingDialogue>& pendings,
-                           const std::unordered_set<uint32_t>& busyAgentIdsFromCSharp) {
-    // 1. 기존의 바쁨 상태 모두 초기화 (O(M_old))
-    reg.clear<BusyTag>();
 
-    // 2. 비동기 대화 중인 NPC 바쁨 상태 부여
-    for (const auto& [task_id, pd] : pendings) {
-        for (auto participant : pd.participants) {
-            if (reg.valid(participant) && !reg.all_of<BusyTag>(participant)) {
-                reg.emplace<BusyTag>(participant);
-            }
-        }
-    }
-
-    // 3. 플레이어 대화 중인 NPC & 플레이어 바쁨 상태 부여
-    auto player_dialogue_view = reg.view<PlayerDialogueComp>();
-    player_dialogue_view.each([&](entt::entity player_ent, const PlayerDialogueComp& pdc) {
-        if (!reg.all_of<BusyTag>(player_ent)) reg.emplace<BusyTag>(player_ent);
-        if (reg.valid(pdc.npc_entity) && !reg.all_of<BusyTag>(pdc.npc_entity)) {
-            reg.emplace<BusyTag>(pdc.npc_entity);
-        }
-    });
-
-    // 4. C#에서 직접 바쁨 상태로 지정한 NPC 바쁨 상태 부여
-    if (reg.ctx().contains<EntityIndex>()) {
-        const auto& entity_index = reg.ctx().get<EntityIndex>();
-        for (const auto& npc_id : busyAgentIdsFromCSharp) {
-            auto it = entity_index.by_npc_id.find(npc_id);
-            if (it != entity_index.by_npc_id.end()) {
-                if (!reg.all_of<BusyTag>(it->second)) {
-                    reg.emplace<BusyTag>(it->second);
-                }
-            }
-        }
-    }
-}
 
 // 1. 감정 쇠퇴 및 감정 전염 처리 시스템
 void SystemEmotionDecay(entt::registry& reg) {
@@ -182,335 +145,141 @@ void SystemEmotionDecay(entt::registry& reg) {
     });
 }
 
-// 2. 스케줄 기반 NPC 위치 이동 및 SpatialGrid 업데이트 시스템
-void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int current_tick) {
-    int current_hour = current_tick % 24;
-    auto view = reg.view<LocationComp, ActivityComp, ScheduleComp, IdentityComp>();
+// 🆕 Axis 2: Job 및 Toil 상태 머신 제어 시스템
+void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
+    auto view = reg.view<LocationComp, ActivityComp, IdentityComp>();
 
-    view.each([&](entt::entity entity, LocationComp& loc, ActivityComp& act, ScheduleComp& sched, IdentityComp& identity) {
-        // 대화 중이거나 바쁜 NPC는 이동 제한 (BusyTag 검사 O(1))
-        // TODO: 만약 하단의 디버그 로그가 불필요해진다면, 뷰 생성 단계에서 entt::exclude<BusyTag>를 사용하여 
-        // 람다 함수 진입 오버헤드 자체를 생략하는 것이 성능상 더욱 좋습니다.
+    view.each([&](entt::entity entity, LocationComp& loc, ActivityComp& act, IdentityComp& identity) {
+        // JobComp와 ToilComp가 없으면 기본 생성
+        if (!reg.all_of<JobComp>(entity)) {
+            reg.emplace<JobComp>(entity);
+        }
+        if (!reg.all_of<ToilComp>(entity)) {
+            reg.emplace<ToilComp>(entity);
+        }
+
+        auto& job = reg.get<JobComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+
+        // NPC가 대화중이거나 바쁘면 Toil 상태를 Interrupted로 전환하고 대기
         if (reg.all_of<BusyTag>(entity)) {
-            std::cout << "💬 [이동 제한] " << identity.display_name << "은(는) 대화 중이므로 이동할 수 없습니다. 위치 유지: [" 
-                      << loc.location_name << "]" << std::endl;
+            if (toil.state != ToilState::Interrupted) {
+                // 이전에 진행 중이던 활성 Job이 있었고, 그것이 대화로 중단되었다면 Report
+                if (job.is_active) {
+                    std::cout << "⏸️ [Job 중단] " << identity.display_name << "의 Job " << job.job_id 
+                              << "이(가) 대화(BusyTag)로 인해 강제 중단되었습니다." << std::endl;
+                    
+                    uint32_t npc_id = identity.npc_id;
+                    uint64_t job_id = job.job_id;
+                    
+                    client.ReportJobStatusAsync(npc_id, job_id, 2, mundusvivens::DIALOGUE_BUSY, "대화 걸려서 바쁨 상태로 전환됨", current_tick, 
+                        [&grpc_queue, entity, npc_id](bool success, bool has_new_job, const MundusVivens::MundusVivensClient::JobPayload& new_job, const std::string& message) {
+                            grpc_queue.Push([success, has_new_job, new_job, entity, npc_id](entt::registry& inner_reg, TcpServer& inner_tcp, MundusVivens::AsyncGrpcClient& inner_client) {
+                                if (success && inner_reg.valid(entity) && inner_reg.all_of<JobComp>(entity)) {
+                                    if (has_new_job) {
+                                        auto& j = inner_reg.get<JobComp>(entity);
+                                        j.job_id = new_job.job_id;
+                                        j.target_location = new_job.target_location;
+                                        j.intent = new_job.intent;
+                                        j.target_agent_id = new_job.target_agent_id;
+                                        j.priority = new_job.priority;
+                                        j.is_active = true;
+                                        
+                                        auto& t = inner_reg.get_or_emplace<ToilComp>(entity);
+                                        t.state = ToilState::Idle;
+                                        t.duration_ticks = 0;
+                                    }
+                                }
+                            });
+                        });
+                }
+                toil.state = ToilState::Interrupted;
+                act.current_activity = "대화 중";
+            }
             return;
         }
 
-        std::string target_location = loc.location_name;
-        std::string scheduled_activity = act.current_activity;
-        bool found_schedule = false;
+        // 바쁘지 않은데 상태가 Interrupted라면 Idle로 복귀
+        if (toil.state == ToilState::Interrupted) {
+            toil.state = ToilState::Idle;
+            act.current_activity = "대기";
+        }
 
-        for (const auto& item : sched.items) {
-            if (item.start_hour <= current_hour && current_hour <= item.end_hour) {
-                target_location = item.target_location;
-                scheduled_activity = item.activity;
-                found_schedule = true;
+        if (!job.is_active) {
+            // 현재 활성화된 Job이 없음 -> Idle
+            toil.state = ToilState::Idle;
+            act.current_activity = "대기";
+            return;
+        }
+
+        // Job이 있는 경우 Toil 상태 실행
+        switch (toil.state) {
+            case ToilState::Idle: {
+                if (loc.location_name != job.target_location) {
+                    toil.state = ToilState::Moving;
+                    act.current_activity = "이동 중: " + job.target_location;
+                } else {
+                    toil.state = ToilState::Working;
+                    toil.duration_ticks = 3; // 기본적으로 3틱(15초) 동안 해당 활동 진행
+                    act.current_activity = job.intent;
+                }
                 break;
             }
-        }
+            case ToilState::Moving: {
+                // Axis 2에서는 즉시 텔레포트 이동 처리
+                std::string old_loc = loc.location_name;
+                uint32_t old_zone = loc.zone_id;
+                uint32_t new_zone = grid.GetOrCreateZoneId(job.target_location);
 
-        // 🆕 관계 기반 이동 (A-2)
-        static std::random_device move_rd;
-        static std::mt19937 move_gen(move_rd());
-        static std::uniform_real_distribution<> move_dis(0.0, 1.0);
+                loc.location_name = job.target_location;
+                loc.zone_id = new_zone;
 
-        bool is_free_time = !found_schedule || scheduled_activity == "대기" || scheduled_activity == "휴식";
-        if (is_free_time || move_dis(move_gen) < 0.15) {
-            if (reg.all_of<RelationshipCacheComp>(entity)) {
-                const auto& rel_comp = reg.get<RelationshipCacheComp>(entity);
-                uint32_t best_target_id = 0;
-                int max_liking = -999;
-                uint32_t worst_target_id = 0;
-                int min_liking = 999;
-
-                for (const auto& [other_id, entry] : rel_comp.relationships) {
-                    if (entry.liking > max_liking) {
-                        max_liking = entry.liking;
-                        best_target_id = other_id;
-                    }
-                    if (entry.liking < min_liking) {
-                        min_liking = entry.liking;
-                        worst_target_id = other_id;
-                    }
+                if (new_zone != old_zone) {
+                    grid.Move(entity, old_zone, new_zone);
+                    std::cout << "🏃 [Job 이동 완료] " << identity.display_name << " 이동: [" << old_loc << "] ➔ [" 
+                              << job.target_location << "] (행동: " << job.intent << ")" << std::endl;
                 }
 
-                // 1. 친밀한 NPC(Liking > 60)를 찾아 그들의 위치로 이동 시도
-                if (max_liking > 60 && best_target_id != 0) {
-                    if (reg.ctx().contains<EntityIndex>()) {
-                        const auto& idx = reg.ctx().get<EntityIndex>();
-                        auto it_target = idx.by_npc_id.find(best_target_id);
-                        if (it_target != idx.by_npc_id.end() && reg.valid(it_target->second)) {
-                            auto target_entity = it_target->second;
-                            if (reg.all_of<LocationComp>(target_entity)) {
-                                const auto& target_loc = reg.get<LocationComp>(target_entity);
-                                target_location = target_loc.location_name;
-                                scheduled_activity = "친구와 대기";
-                                found_schedule = true;
-                                std::cout << "🤝 [우정 이동] " << identity.display_name << "은(는) 친한 친구 " 
-                                          << reg.get<IdentityComp>(target_entity).display_name 
-                                          << "을(를) 찾아 [" << target_location << "]공간으로 이동합니다! (Liking: " 
-                                          << max_liking << ")" << std::endl;
-                            }
-                        }
-                    }
-                }
-                // 2. 적대적인 NPC(Liking < -50)가 현재 구역에 있는 경우 다른 구역으로 회피
-                else if (min_liking < -50 && worst_target_id != 0) {
-                    if (reg.ctx().contains<EntityIndex>()) {
-                        const auto& idx = reg.ctx().get<EntityIndex>();
-                        auto it_target = idx.by_npc_id.find(worst_target_id);
-                        if (it_target != idx.by_npc_id.end() && reg.valid(it_target->second)) {
-                            auto enemy_entity = it_target->second;
-                            if (reg.all_of<LocationComp>(enemy_entity)) {
-                                const auto& enemy_loc = reg.get<LocationComp>(enemy_entity);
-                                if (enemy_loc.zone_id == loc.zone_id && enemy_loc.zone_id != 0) {
-                                    std::vector<std::string> escape_locations;
-                                    for (const auto& l : grid.AllZones()) {
-                                        if (l.first != loc.zone_id) {
-                                            if (!l.second.empty() && reg.valid(l.second[0]) && reg.all_of<LocationComp>(l.second[0])) {
-                                                escape_locations.push_back(reg.get<LocationComp>(l.second[0]).location_name);
-                                            }
-                                        }
-                                    }
-                                    if (!escape_locations.empty()) {
-                                        target_location = escape_locations[0];
-                                        scheduled_activity = "불편한 상대 회피";
-                                        found_schedule = true;
-                                        std::cout << "💨 [도피 이동] " << identity.display_name << "은(는) 원수 " 
-                                                  << reg.get<IdentityComp>(enemy_entity).display_name 
-                                                  << "을(를) 피해 [" << target_location << "]공간으로 피신합니다! (Liking: " 
-                                                  << min_liking << ")" << std::endl;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                toil.state = ToilState::Working;
+                toil.duration_ticks = 3; // 기본 3틱 유지
+                act.current_activity = job.intent;
+                break;
             }
-        }
+            case ToilState::Working: {
+                if (toil.duration_ticks > 0) {
+                    toil.duration_ticks--;
+                    std::cout << "🛠️ [Job 진행] " << identity.display_name << " 작업 중: [" << loc.location_name 
+                              << "] (남은 틱: " << toil.duration_ticks << ")" << std::endl;
+                }
 
-        std::string old_loc = loc.location_name;
-        if (found_schedule) {
-            loc.location_name = target_location;
-            act.current_activity = scheduled_activity;
+                if (toil.duration_ticks <= 0) {
+                    // Job 완료 처리
+                    std::cout << "✅ [Job 완료] " << identity.display_name << "의 Job " << job.job_id << " 완료!" << std::endl;
+                    job.is_active = false;
+                    toil.state = ToilState::Idle;
+                    act.current_activity = "대기";
 
-            uint32_t old_zone = loc.zone_id;
-            uint32_t new_zone = grid.GetOrCreateZoneId(target_location);
-            loc.zone_id = new_zone;
-
-            if (new_zone != old_zone) {
-                grid.Move(entity, old_zone, new_zone);
-                std::cout << "🏃 [스케줄 이동] " << identity.display_name << " 이동함: [" << old_loc << "] ➔ [" 
-                          << target_location << "] (행동: " << scheduled_activity << ")" << std::endl;
-            } else {
-                grid.Insert(entity, new_zone);
-                std::cout << "🧍 [스케줄 유지] " << identity.display_name << " 위치 유지: [" << target_location 
-                          << "] (행동: " << scheduled_activity << ")" << std::endl;
+                    // C# 서버에 Job 완료 상태 보고
+                    uint32_t npc_id = identity.npc_id;
+                    uint64_t job_id = job.job_id;
+                    client.ReportJobStatusAsync(npc_id, job_id, 0, mundusvivens::UNKNOWN_REASON, "스케줄 완료", current_tick,
+                        [](bool success, bool has_new_job, const MundusVivens::MundusVivensClient::JobPayload& new_job, const std::string& message) {
+                            // 단순 완료 로그
+                        });
+                }
+                break;
             }
-        } else {
-            uint32_t current_zone = grid.GetOrCreateZoneId(loc.location_name);
-            loc.zone_id = current_zone;
-            grid.Insert(entity, current_zone);
-            std::cout << "🧍 [위치 잔류] " << identity.display_name << " 위치 유지: [" << loc.location_name 
-                      << "] (현재 행동: " << act.current_activity << ")" << std::endl;
+            default:
+                break;
         }
     });
 }
 
-// 3. 비동기 대화 결과 수거 시스템
-void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
-                               MundusVivens::AsyncGrpcClient& client, int tick,
-                               std::unordered_map<uint64_t, PendingDialogue>& pendingDialogues,
-                               GrpcResultQueue& grpc_queue) {
 
-    for (auto it = pendingDialogues.begin(); it != pendingDialogues.end(); ) {
-        const auto& pd = it->second;
-        // [기아 방지] 10틱(50초) 이상 완료 응답이 없으면 타임아웃 강제 해제
-        if (tick - pd.triggered_tick > 10) {
-            std::string participant_names = "";
-            for (auto ent : pd.participants) {
-                if (reg.valid(ent)) {
-                    participant_names += reg.get<IdentityComp>(ent).display_name + " ";
-                }
-            }
-
-            std::cerr << "⚠️ [대화 타임아웃] Job " << pd.task_id
-                      << " (참가자: " << participant_names
-                      << ", 장소: " << pd.meeting_location
-                      << ") 응답 없음 — 강제 해제합니다." << std::endl;
-
-            for (auto ent : pd.participants) {
-                if (reg.valid(ent)) {
-                    reg.get<ActivityComp>(ent).current_activity = "대기";
-                    auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
-                    cooldown.global_cooldown_until = tick + 3;
-                    if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
-                }
-            }
-
-            it = pendingDialogues.erase(it);
-            continue;
-        }
-
-        if (!it->second.poll_requested) {
-            it->second.poll_requested = true;
-            uint64_t task_id = it->first;
-            
-            client.PollDialogueResultAsync(task_id, [&grpc_queue, &pendingDialogues, &grid, task_id, tick](bool success, const MundusVivens::DialogueResult& result) {
-                grpc_queue.Push([success, task_id, tick, result, &pendingDialogues, &grid](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
-                    auto pd_it = pendingDialogues.find(task_id);
-                    if (pd_it == pendingDialogues.end()) return; // 이미 타임아웃 등으로 삭제됨
-
-                    if (!success) {
-                        pd_it->second.poll_requested = false;
-                        std::cerr << "⏳ [대화 결과 수거 에러] Job " << task_id << " 통신 에러 발생. 다음 틱에 재시도합니다." << std::endl;
-                        return;
-                    }
-
-                    if (result.is_completed) {
-                        const auto& pd_val = pd_it->second;
-                        std::string participant_names = "";
-                        for (auto ent : pd_val.participants) {
-                            if (reg.valid(ent)) {
-                                participant_names += reg.get<IdentityComp>(ent).display_name + " ";
-                            }
-                        }
-
-                        std::cout << "\n🔔 [비동기 대화 완료 수신] [" << pd_val.meeting_location << "]에서 진행된 ("
-                                  << participant_names << ")의 대화 완료!" << std::endl;
-
-                        if (result.dialogue_lines.empty()) {
-                            std::cerr << "❌ [대화 데이터 에러] 대화 수거에 성공했으나 대사 텍스트가 비어있습니다. 에러 요약: " 
-                                      << result.dialogue_summary << std::endl;
-                        } else {
-                            std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
-                            std::cout << result.dialogue_summary << std::endl;
-                            std::cout << "==============================================================" << std::endl;
-
-                            std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
-                            for (const auto& line : result.dialogue_lines) {
-                                std::cout << line << std::endl;
-                            }
-                            std::cout << "==============================================================\n" << std::endl;
-                        }
-
-                        // C++ 내부 감정 상태 갱신 (EntityIndex O(1) 역방향 인덱스 활용)
-                        if (reg.ctx().contains<EntityIndex>()) {
-                            const auto& entity_index = reg.ctx().get<EntityIndex>();
-                            for (const auto& em_update : result.emotion_updates) {
-                                entt::entity target_ent = entt::null;
-                                auto idx_it = entity_index.by_npc_id.find(em_update.agent_id);
-                                if (idx_it != entity_index.by_npc_id.end()) {
-                                    target_ent = idx_it->second;
-                                }
-
-                                if (reg.valid(target_ent) && reg.all_of<EmotionComp>(target_ent)) {
-                                    auto& emo = reg.get<EmotionComp>(target_ent);
-                                    const auto& identity = reg.get<IdentityComp>(target_ent);
-                                    emo.current_emotion = em_update.new_emotion;
-                                    std::cout << "🎭 [감정 동기화] " << identity.display_name << "의 감정이 [" << em_update.new_emotion 
-                                              << "](으)로 업데이트되었습니다." << std::endl;
-
-                                    int decay_ticks = 3;
-                                    std::string new_emo = em_update.new_emotion;
-                                    if (new_emo.find("분노") != std::string::npos || 
-                                        new_emo.find("공포") != std::string::npos || 
-                                        new_emo.find("우울") != std::string::npos || 
-                                        new_emo.find("슬픔") != std::string::npos || 
-                                        new_emo.find("의심") != std::string::npos || 
-                                        new_emo.find("경계") != std::string::npos ||
-                                        new_emo.find("냉소") != std::string::npos ||
-                                        new_emo.find("적대") != std::string::npos) {
-                                        decay_ticks = 10;
-                                    } else if (new_emo.find("기쁨") != std::string::npos || 
-                                               new_emo.find("놀람") != std::string::npos || 
-                                               new_emo.find("불안") != std::string::npos || 
-                                               new_emo.find("기대") != std::string::npos ||
-                                               new_emo.find("연민") != std::string::npos) {
-                                        decay_ticks = 6;
-                                    } else if (new_emo.find("흥분") != std::string::npos ||
-                                               new_emo.find("유쾌") != std::string::npos ||
-                                               new_emo.find("재미") != std::string::npos ||
-                                               new_emo.find("흥미") != std::string::npos) {
-                                        decay_ticks = 3;
-                                    }
-                                    emo.decay_ticks_remaining = decay_ticks;
-                                }
-                            }
-                        }
-
-                        // 🆕 엿듣기(Eavesdropping) 동작성 추가 (완료된 대화의 Zone 내 방관자 NPC들을 탐색)
-                        uint32_t zone_id = reg.get<LocationComp>(pd_val.participants[0]).zone_id;
-                        const auto& zone_entities = reg.get<LocationComp>(pd_val.participants[0]).zone_id != 0 ? 
-                            reg.get<LocationComp>(pd_val.participants[0]).zone_id : 0;
-                        
-                        if (zone_id != 0) {
-                            const auto& bystanders = reg.ctx().contains<SpatialHashGrid>() ? 
-                                reg.ctx().get<SpatialHashGrid>().GetEntitiesInZone(zone_id) :
-                                // SpatialHashGrid에 접근할 수 없다면 파라미터 grid를 직접 사용
-                                grid.GetEntitiesInZone(zone_id);
-
-                            std::unordered_set<entt::entity> part_set(pd_val.participants.begin(), pd_val.participants.end());
-                            for (auto ent : bystanders) {
-                                if (part_set.find(ent) == part_set.end()) {
-                                    if (reg.valid(ent) && reg.all_of<IdentityComp>(ent)) {
-                                        uint32_t bystander_id = reg.get<IdentityComp>(ent).npc_id;
-                                        std::string bystander_name = reg.get<IdentityComp>(ent).display_name;
-
-                                        uint32_t subject_id = 2; // 기본 대상 ID (Cedric 등)
-                                        if (!pd_val.participants.empty() && reg.valid(pd_val.participants[0])) {
-                                            subject_id = reg.get<IdentityComp>(pd_val.participants[0]).npc_id;
-                                        }
-
-                                        std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
-                                                  << pd_val.meeting_location << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
-
-                                        async_client.InjectGossipAsync(bystander_id, subject_id, result.dialogue_summary, [bystander_name](bool success, const std::string& msg) {
-                                            if (success) {
-                                                std::cout << "📢 [소문 주입 성공] " << bystander_name << "의 기억에 소문이 주입되었습니다." << std::endl;
-                                            } else {
-                                                std::cerr << "❌ [소문 주입 실패] " << bystander_name << ": " << msg << std::endl;
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                        }
-
-                        // 행동 상태 갱신 및 쿨다운 설정
-                        for (auto ent : pd_val.participants) {
-                            if (reg.valid(ent)) {
-                                reg.get<ActivityComp>(ent).current_activity = "대화 마침";
-                                auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
-                                cooldown.global_cooldown_until = tick + 3;
-                                if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
-                            }
-                        }
-
-                        pendingDialogues.erase(pd_it);
-                    } else {
-                        pd_it->second.poll_requested = false;
-                        std::string participant_names = "";
-                        for (auto ent : pd_it->second.participants) {
-                            if (reg.valid(ent)) {
-                                participant_names += reg.get<IdentityComp>(ent).display_name + " ";
-                            }
-                        }
-                        std::cout << "⏳ [대화 진행 중] Job " << task_id << " (" << participant_names 
-                                  << ") 연산 대기 중..." << std::endl;
-                    }
-                });
-            });
-        }
-        ++it;
-    }
-}
 
 // 4. 공간 그리드 기반 동일 구역 내 NPC 간 대화 트리거 시스템
 void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
-                                  std::unordered_map<uint64_t, PendingDialogue>& pendingDialogues,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis,
                                   GrpcResultQueue& grpc_queue) {
     // 공간 해시 그리드의 각 zone을 순회
@@ -698,9 +467,10 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                         reg.emplace_or_replace<BusyTag>(ent);
                     }
 
-                    // 비동기 트리거 호출
-                    client.TriggerDialogueAsync(std::move(group_ids), [&grpc_queue, &pendingDialogues, group_participants, tick, loc_name, participant_names_str](bool success, const MundusVivens::DialogueResult& result) {
-                        grpc_queue.Push([success, result, group_participants, tick, loc_name, participant_names_str, &pendingDialogues](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+                    // 비동기 트리거 호출 (반응형 단일 RPC 구조)
+                    client.TriggerDialogueAsync(std::move(group_ids), [&grpc_queue, group_participants, tick, loc_name, participant_names_str, &grid](bool success, const MundusVivens::DialogueResult& result) {
+                        grpc_queue.Push([success, result, group_participants, tick, loc_name, participant_names_str, &grid](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+
                             bool all_valid = true;
                             for (auto ent : group_participants) {
                                 if (!reg.valid(ent)) {
@@ -709,18 +479,120 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                 }
                             }
 
-                            if (success && result.is_queued) {
-                                std::cout << "🚀 대화가 대기열에 성공적으로 등록되었습니다. Job ID: " << result.task_id << std::endl;
-                                if (all_valid) {
-                                    pendingDialogues[result.task_id] = { result.task_id, group_participants, tick, loc_name, false };
-                                    for (auto ent : group_participants) {
+                            if (success && all_valid) {
+                                std::string participant_names = "";
+                                for (auto ent : group_participants) {
+                                    participant_names += reg.get<IdentityComp>(ent).display_name + " ";
+                                }
+
+                                std::cout << "\n🔔 [비동기 대화 완료 수신] [" << loc_name << "]에서 진행된 ("
+                                          << participant_names << ")의 대화 완료!" << std::endl;
+
+                                if (result.dialogue_lines.empty()) {
+                                    std::cerr << "❌ [대화 데이터 에러] 대화 수거에 성공했으나 대사 텍스트가 비어있습니다. 에러 요약: " 
+                                              << result.dialogue_summary << std::endl;
+                                } else {
+                                    std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
+                                    std::cout << result.dialogue_summary << std::endl;
+                                    std::cout << "==============================================================" << std::endl;
+
+                                    std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
+                                    for (const auto& line : result.dialogue_lines) {
+                                        std::cout << line << std::endl;
+                                    }
+                                    std::cout << "==============================================================\n" << std::endl;
+                                }
+
+                                // C++ 내부 감정 상태 갱신
+                                if (reg.ctx().contains<EntityIndex>()) {
+                                    const auto& entity_index = reg.ctx().get<EntityIndex>();
+                                    for (const auto& em_update : result.emotion_updates) {
+                                        entt::entity target_ent = entt::null;
+                                        auto idx_it = entity_index.by_npc_id.find(em_update.agent_id);
+                                        if (idx_it != entity_index.by_npc_id.end()) {
+                                            target_ent = idx_it->second;
+                                        }
+
+                                        if (reg.valid(target_ent) && reg.all_of<EmotionComp>(target_ent)) {
+                                            auto& emo = reg.get<EmotionComp>(target_ent);
+                                            const auto& identity = reg.get<IdentityComp>(target_ent);
+                                            emo.current_emotion = em_update.new_emotion;
+                                            std::cout << "🎭 [감정 동기화] " << identity.display_name << "의 감정이 [" << em_update.new_emotion 
+                                                      << "](으)로 업데이트되었습니다." << std::endl;
+
+                                            int decay_ticks = 3;
+                                            std::string new_emo = em_update.new_emotion;
+                                            if (new_emo.find("분노") != std::string::npos || 
+                                                new_emo.find("공포") != std::string::npos || 
+                                                new_emo.find("우울") != std::string::npos || 
+                                                new_emo.find("슬픔") != std::string::npos || 
+                                                new_emo.find("의심") != std::string::npos || 
+                                                new_emo.find("경계") != std::string::npos ||
+                                                new_emo.find("냉소") != std::string::npos ||
+                                                new_emo.find("적대") != std::string::npos) {
+                                                decay_ticks = 10;
+                                            } else if (new_emo.find("기쁨") != std::string::npos || 
+                                                       new_emo.find("놀람") != std::string::npos || 
+                                                       new_emo.find("불안") != std::string::npos || 
+                                                       new_emo.find("기대") != std::string::npos ||
+                                                       new_emo.find("연민") != std::string::npos) {
+                                                decay_ticks = 6;
+                                            } else if (new_emo.find("흥분") != std::string::npos ||
+                                                       new_emo.find("유쾌") != std::string::npos ||
+                                                       new_emo.find("재미") != std::string::npos ||
+                                                       new_emo.find("흥미") != std::string::npos) {
+                                                decay_ticks = 3;
+                                            }
+                                            emo.decay_ticks_remaining = decay_ticks;
+                                        }
+                                    }
+                                }
+
+                                // 🆕 엿듣기(Eavesdropping) 동작성 추가
+                                if (!group_participants.empty() && reg.valid(group_participants[0])) {
+                                    uint32_t zone_id = reg.get<LocationComp>(group_participants[0]).zone_id;
+                                    if (zone_id != 0) {
+                                        const auto& bystanders = reg.ctx().contains<SpatialHashGrid>() ? 
+                                            reg.ctx().get<SpatialHashGrid>().GetEntitiesInZone(zone_id) :
+                                            grid.GetEntitiesInZone(zone_id);
+
+                                        std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
+                                        for (auto ent : bystanders) {
+                                            if (part_set.find(ent) == part_set.end()) {
+                                                if (reg.valid(ent) && reg.all_of<IdentityComp>(ent)) {
+                                                    uint32_t bystander_id = reg.get<IdentityComp>(ent).npc_id;
+                                                    std::string bystander_name = reg.get<IdentityComp>(ent).display_name;
+
+                                                    uint32_t subject_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
+
+                                                    std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
+                                                              << loc_name << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
+
+                                                    async_client.InjectGossipAsync(bystander_id, subject_id, result.dialogue_summary, [bystander_name](bool success, const std::string& msg) {
+                                                        if (success) {
+                                                            std::cout << "📢 [소문 주입 성공] " << bystander_name << "의 기억에 소문이 주입되었습니다." << std::endl;
+                                                        } else {
+                                                            std::cerr << "❌ [소문 주입 실패] " << bystander_name << ": " << msg << std::endl;
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 행동 상태 갱신 및 쿨다운 설정
+                                for (auto ent : group_participants) {
+                                    if (reg.valid(ent)) {
                                         reg.get<CooldownComp>(ent).daily_dialogue_count++;
-                                        reg.get<ActivityComp>(ent).current_activity = "대화 중";
-                                        reg.emplace_or_replace<BusyTag>(ent);
+                                        reg.get<ActivityComp>(ent).current_activity = "대화 마침";
+                                        auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
+                                        cooldown.global_cooldown_until = tick + 3;
+                                        if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
                                     }
                                 }
                             } else {
-                                std::cerr << "❌ [대화 요청 실패] 대화가 큐에 등록되지 못했습니다." << std::endl;
+                                std::cerr << "❌ [대화 요청 실패] 대화 완료 콜백 수신 실패 또는 취소됨." << std::endl;
                                 for (auto ent : group_participants) {
                                     if (reg.valid(ent)) {
                                         reg.get<ActivityComp>(ent).current_activity = "대기";

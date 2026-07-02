@@ -33,12 +33,6 @@ void AsyncGrpcClient::TriggerDialogueAsync(std::vector<uint32_t> participant_ids
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::PollDialogueResultAsync(uint64_t task_id, DialogueCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
-        DoPollDialogueResult(task_id, std::move(on_complete)),
-        boost::asio::detached);
-}
-
 void AsyncGrpcClient::BatchUpdateStatusAsync(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
         DoBatchUpdateStatus(std::move(updates), std::move(on_complete)),
@@ -63,6 +57,11 @@ void AsyncGrpcClient::EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCal
         boost::asio::detached);
 }
 
+void AsyncGrpcClient::InjectGossipAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
+    boost::asio::co_spawn(io_ctx_,
+        DoInjectGossip(target_agent_id, subject_id, std::move(content), std::move(on_complete)),
+        boost::asio::detached);
+}
 // -------------------------------------------------------------
 // Private Coroutine Implementations (Safe parameter lifetime)
 // -------------------------------------------------------------
@@ -109,7 +108,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncTriggerDialogue>;
         grpc::ClientContext context;
-        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(15));
 
         mundusvivens::TriggerDialogueRequest request;
         if (participant_ids.size() >= 2) {
@@ -119,7 +118,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
         for (uint32_t pid : participant_ids) {
             request.add_participant_ids(pid);
         }
-        request.set_wait_for_completion(false);
+        request.set_wait_for_completion(true);
         mundusvivens::TriggerDialogueResponse response;
 
         const grpc::Status status = co_await RPC::request(
@@ -132,7 +131,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
             result.is_queued = response.is_queued();
             result.completed_immediately = response.completed_immediately();
             result.dialogue_summary = response.dialogue_summary();
-            result.is_completed = response.completed_immediately();
+            result.is_completed = true;
             result.dialogue_lines.assign(response.dialogue_lines().begin(), response.dialogue_lines().end());
             result.structured_lines.reserve(response.structured_lines_size());
             for (int i = 0; i < response.structured_lines_size(); ++i) {
@@ -159,58 +158,6 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
         }
     } catch (const std::exception& e) {
         std::cerr << "❌ [Exception in TriggerDialogueAsync] " << e.what() << std::endl;
-    }
-}
-
-boost::asio::awaitable<void> AsyncGrpcClient::DoPollDialogueResult(uint64_t task_id, DialogueCallback on_complete) {
-    try {
-        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncGetDialogueResult>;
-        grpc::ClientContext context;
-        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-
-        mundusvivens::GetDialogueResultRequest request;
-        request.set_task_id(task_id);
-        mundusvivens::GetDialogueResultResponse response;
-
-        const grpc::Status status = co_await RPC::request(
-            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
-        );
-
-        DialogueResult result;
-        result.task_id = task_id;
-        if (status.ok()) {
-            result.is_completed = response.is_completed();
-            result.dialogue_summary = response.dialogue_summary();
-            if (result.is_completed) {
-                result.structured_lines.reserve(response.lines_size());
-                result.dialogue_lines.reserve(response.lines_size());
-                for (int i = 0; i < response.lines_size(); ++i) {
-                    const auto& proto_line = response.lines(i);
-                    result.structured_lines.push_back(DialogueLine{
-                        proto_line.speaker_id(),
-                        proto_line.speaker_name(),
-                        proto_line.text()
-                    });
-                    result.dialogue_lines.push_back(proto_line.speaker_name() + ": " + proto_line.text());
-                }
-                result.emotion_updates.reserve(response.emotion_updates_size());
-                for (int i = 0; i < response.emotion_updates_size(); ++i) {
-                    const auto& proto_update = response.emotion_updates(i);
-                    result.emotion_updates.push_back(AgentEmotionUpdate{
-                        proto_update.agent_id(),
-                        proto_update.new_emotion()
-                    });
-                }
-            }
-            on_complete(true, result);
-        } else {
-            result.has_error = true;
-            result.is_completed = false;
-            result.dialogue_summary = "gRPC error: " + status.error_message();
-            on_complete(false, result);
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "❌ [Exception in PollDialogueResultAsync] " << e.what() << std::endl;
     }
 }
 
@@ -318,12 +265,6 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoEndPlayerDialogue(uint64_t sessi
     }
 }
 
-void AsyncGrpcClient::InjectGossipAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
-        DoInjectGossip(target_agent_id, subject_id, std::move(content), std::move(on_complete)),
-        boost::asio::detached);
-}
-
 boost::asio::awaitable<void> AsyncGrpcClient::DoInjectGossip(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncInjectGossip>;
@@ -347,6 +288,97 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoInjectGossip(uint32_t target_age
         }
     } catch (const std::exception& e) {
         std::cerr << "❌ [Exception in InjectGossipAsync] " << e.what() << std::endl;
+    }
+}
+
+void AsyncGrpcClient::GetPendingJobsAsync(int32_t current_tick, PendingJobsCallback on_complete) {
+    boost::asio::co_spawn(io_ctx_,
+        DoGetPendingJobs(current_tick, std::move(on_complete)),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> AsyncGrpcClient::DoGetPendingJobs(int32_t current_tick, PendingJobsCallback on_complete) {
+    try {
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncGetPendingJobs>;
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        mundusvivens::GetPendingJobsRequest request;
+        request.set_current_tick(current_tick);
+        mundusvivens::GetPendingJobsResponse response;
+
+        const grpc::Status status = co_await RPC::request(
+            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
+        );
+
+        if (status.ok()) {
+            std::vector<MundusVivensClient::JobPayload> jobs;
+            jobs.reserve(response.jobs_size());
+            for (int i = 0; i < response.jobs_size(); ++i) {
+                const auto& proto_job = response.jobs(i);
+                MundusVivensClient::JobPayload job;
+                job.npc_id = proto_job.npc_id();
+                job.job_id = proto_job.job_id();
+                job.target_location = proto_job.target_location();
+                job.intent = proto_job.intent();
+                job.target_agent_id = proto_job.target_agent_id();
+                job.priority = proto_job.priority();
+                jobs.push_back(job);
+            }
+            on_complete(true, jobs);
+        } else {
+            on_complete(false, {});
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception in GetPendingJobsAsync] " << e.what() << std::endl;
+        on_complete(false, {});
+    }
+}
+
+void AsyncGrpcClient::ReportJobStatusAsync(uint32_t npc_id, uint64_t job_id, int32_t status_val, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete) {
+    boost::asio::co_spawn(io_ctx_,
+        DoReportJobStatus(npc_id, job_id, status_val, reason_code, detailed_context, current_tick, std::move(on_complete)),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> AsyncGrpcClient::DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status_val, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete) {
+    try {
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncReportJobStatus>;
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        mundusvivens::ReportJobStatusRequest request;
+        request.set_npc_id(npc_id);
+        request.set_job_id(job_id);
+        request.set_status(static_cast<mundusvivens::ReportJobStatusRequest_JobStatus>(status_val));
+        request.set_reason_code(reason_code);
+        request.set_detailed_context(detailed_context);
+        request.set_current_tick(current_tick);
+        mundusvivens::ReportJobStatusResponse response;
+
+        const grpc::Status status = co_await RPC::request(
+            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
+        );
+
+        if (status.ok()) {
+            MundusVivensClient::JobPayload new_job{};
+            bool has_new = response.has_new_job();
+            if (has_new) {
+                const auto& proto_job = response.new_job();
+                new_job.npc_id = proto_job.npc_id();
+                new_job.job_id = proto_job.job_id();
+                new_job.target_location = proto_job.target_location();
+                new_job.intent = proto_job.intent();
+                new_job.target_agent_id = proto_job.target_agent_id();
+                new_job.priority = proto_job.priority();
+            }
+            on_complete(response.success(), has_new, new_job, response.message());
+        } else {
+            on_complete(false, false, {}, "gRPC error: " + status.error_message());
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception in ReportJobStatusAsync] " << e.what() << std::endl;
+        on_complete(false, false, {}, e.what());
     }
 }
 

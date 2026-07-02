@@ -11,18 +11,18 @@ struct IdentityComp {
     std::string display_name;
 };
 
-// 🆕 성격 정보 (외향성)
+// 성격 정보 (외향성)
 struct PersonalityComp {
     float extroversion = 0.5f;
 };
 
-// 🆕 관계 엔트리 (친밀도 Liking, 신뢰도 Trust)
+// 관계 엔트리 (친밀도 Liking, 신뢰도 Trust)
 struct RelationshipEntry {
     int liking = 0;
     int trust = 50;
 };
 
-// 🆕 관계망 정보 캐시
+// 관계망 정보 캐시
 struct RelationshipCacheComp {
     std::unordered_map<uint32_t, RelationshipEntry> relationships; // 상대 NPC ID -> 관계 정보
 };
@@ -51,20 +51,32 @@ struct CooldownComp {
     int daily_dialogue_count = 0;
 };
 
-// 일일 스케줄 항목
-struct ScheduleItem {
-    int32_t start_hour = 0;
-    int32_t end_hour = 0;
+
+// Axis 2: Job 컴포넌트 (C# 대뇌가 할당한 고차원 의도)
+struct JobComp {
+    uint64_t job_id = 0;
     std::string target_location;
-    std::string activity;
+    std::string intent;
+    uint32_t target_agent_id = 0;
+    int32_t priority = 0;
+    bool is_active = false;
 };
 
-// 스케줄 컴포넌트 (DailySchedules 대체)
-struct ScheduleComp {
-    std::vector<ScheduleItem> items;
+// Axis 2: Toil 컴포넌트 (C++ 척수가 실행하는 마이크로 상태)
+enum class ToilState {
+    Idle,
+    Moving,
+    Working,
+    Interrupted
 };
 
-// 네트워크 동기화 캐시 (LastSentLocations/LastSentEmotions/LastSentActivities 통합)
+struct ToilComp {
+    ToilState state = ToilState::Idle;
+    std::string current_action;
+    int32_t duration_ticks = 0;
+};
+
+// 네트워크 동기화 캐시 
 struct LastSyncedComp {
     std::string location;
     std::string emotion;
