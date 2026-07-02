@@ -150,6 +150,18 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
                     proto_update.new_emotion()
                 });
             }
+            result.next_jobs.reserve(response.next_jobs_size());
+            for (int i = 0; i < response.next_jobs_size(); ++i) {
+                const auto& proto_job = response.next_jobs(i);
+                MundusVivensClient::JobPayload job;
+                job.npc_id = proto_job.npc_id();
+                job.job_id = proto_job.job_id();
+                job.target_location = proto_job.target_location();
+                job.intent = proto_job.intent();
+                job.target_agent_id = proto_job.target_agent_id();
+                job.priority = proto_job.priority();
+                result.next_jobs.push_back(job);
+            }
             on_complete(true, result);
         } else {
             result.has_error = true;

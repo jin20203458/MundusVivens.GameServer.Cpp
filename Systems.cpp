@@ -548,6 +548,37 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                     }
                                 }
 
+                                 // C++ 내부 다음 행동 계획(next_jobs) 반영
+                                 if (reg.ctx().contains<EntityIndex>()) {
+                                     const auto& entity_index = reg.ctx().get<EntityIndex>();
+                                     for (const auto& nj : result.next_jobs) {
+                                         entt::entity target_ent = entt::null;
+                                         auto idx_it = entity_index.by_npc_id.find(nj.npc_id);
+                                         if (idx_it != entity_index.by_npc_id.end()) {
+                                             target_ent = idx_it->second;
+                                         }
+
+                                         if (reg.valid(target_ent)) {
+                                             auto& job = reg.get_or_emplace<JobComp>(target_ent);
+                                             job.job_id = nj.job_id;
+                                             job.target_location = nj.target_location;
+                                             job.intent = nj.intent;
+                                             job.target_agent_id = nj.target_agent_id;
+                                             job.priority = nj.priority;
+                                             job.is_active = true;
+
+                                             auto& toil = reg.get_or_emplace<ToilComp>(target_ent);
+                                             toil.state = ToilState::Idle;
+                                             toil.duration_ticks = 0;
+
+                                             std::cout << "🧠 [C++ 대화 후 동기화 계획 적용] " 
+                                                       << reg.get<IdentityComp>(target_ent).display_name 
+                                                       << " ➔ 위치: " << nj.target_location 
+                                                       << ", 행동: " << nj.intent << " (Job: " << nj.job_id << ")" << std::endl;
+                                         }
+                                     }
+                                 }
+
                                 // 🆕 엿듣기(Eavesdropping) 동작성 추가
                                 if (!group_participants.empty() && reg.valid(group_participants[0])) {
                                     uint32_t zone_id = reg.get<LocationComp>(group_participants[0]).zone_id;

@@ -19,6 +19,15 @@ struct AgentEmotionUpdate {
     std::string new_emotion;
 };
 
+struct JobPayload {
+    uint32_t npc_id;
+    uint64_t job_id;
+    std::string target_location;
+    std::string intent;
+    uint32_t target_agent_id = 0;
+    int32_t priority = 0;
+};
+
 struct DialogueResult {
     uint64_t task_id;
     bool is_queued = false;
@@ -28,6 +37,7 @@ struct DialogueResult {
     std::vector<std::string> dialogue_lines;
     std::vector<DialogueLine> structured_lines;
     std::vector<AgentEmotionUpdate> emotion_updates; // 🆕 대화에 의한 감정 변동 리스트
+    std::vector<JobPayload> next_jobs; // 🆕 대화 결과에 따른 다음 행동들
     bool has_error = false; // 🆕 통신 장애 발생 플래그
 };
 
@@ -116,14 +126,7 @@ public:
 
 
     // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
-    struct JobPayload {
-        uint32_t npc_id;
-        uint64_t job_id;
-        std::string target_location;
-        std::string intent;
-        uint32_t target_agent_id = 0;
-        int32_t priority = 0;
-    };
+    using JobPayload = MundusVivens::JobPayload;
 
     std::vector<JobPayload> GetPendingJobs(int32_t current_tick);
     bool ReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, JobPayload& out_new_job);

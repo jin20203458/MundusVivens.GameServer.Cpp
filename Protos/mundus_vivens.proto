@@ -38,6 +38,7 @@ message TriggerDialogueResponse {
   repeated string dialogue_lines = 5;         //  디버깅 문자열 데이터
   repeated DialogueLine structured_lines = 6; //  구조화된 대사 데이터 
   repeated AgentEmotionUpdate emotion_updates = 7;
+  repeated JobPayload next_jobs = 8; // 🆕 대화 결과에 따른 다음 행동들
 }
 
 message GetAgentStatusRequest {
