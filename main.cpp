@@ -19,7 +19,58 @@
 #include "Systems.h"
 #include "TcpServer.h"
 #include "ClientSession.h"
+#include "GrpcResultQueue.h"
 
+
+// MSVC 17.14+ STL vectorization linker mismatch workaround stubs
+#if defined(_MSC_VER) && _MSC_VER < 1940
+#include <cstdint>
+extern "C" {
+    size_t __stdcall __std_find_first_not_of_trivial_pos_1(
+        const void* _Haystack, size_t _Haystack_length, const void* _Needle, size_t _Needle_length) noexcept 
+    {
+        const char* haystack = static_cast<const char*>(_Haystack);
+        const char* needle = static_cast<const char*>(_Needle);
+        for (size_t i = 0; i < _Haystack_length; ++i) {
+            bool found = false;
+            for (size_t j = 0; j < _Needle_length; ++j) {
+                if (haystack[i] == needle[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return i;
+        }
+        return _Haystack_length;
+    }
+
+    const void* __stdcall __std_min_element_8i(const void* _First, const void* _Last) noexcept {
+        const int64_t* first = static_cast<const int64_t*>(_First);
+        const int64_t* last = static_cast<const int64_t*>(_Last);
+        if (first == last) return first;
+        const int64_t* min_el = first;
+        while (++first != last) {
+            if (*first < *min_el) {
+                min_el = first;
+            }
+        }
+        return min_el;
+    }
+
+    const void* __stdcall __std_max_element_d_(const void* _First, const void* _Last) noexcept {
+        const double* first = static_cast<const double*>(_First);
+        const double* last = static_cast<const double*>(_Last);
+        if (first == last) return first;
+        const double* max_el = first;
+        while (++first != last) {
+            if (*max_el < *first) {
+                max_el = first;
+            }
+        }
+        return max_el;
+    }
+}
+#endif
 
 // 종료 시그널 제어 플래그 및 시그널 핸들러 정의
 std::atomic<bool> keep_running(true);
@@ -40,11 +91,13 @@ int main() {
     std::signal(SIGTERM, signal_handler);
 
     std::cout << "=======================================================" << std::endl;
-    std::cout << "🎮 Mundus Vivens — C++ 게임 서버 시뮬레이터 콘솔 (2-스레드 멀티 리액터)" << std::endl;
+    std::cout << "🎮 Mundus Vivens — C++ 게임 서버 시뮬레이터 콘솔 (3-스레드 멀티 리액터)" << std::endl;
     std::cout << "=======================================================\n" << std::endl;
 
-    // 1. Boost.Asio I/O 서비스 초기화
+    // 1. Boost.Asio I/O 서비스 초기화 및 네트워크 전용 스레드 가동
     boost::asio::io_context io;
+    auto io_work_guard = boost::asio::make_work_guard(io);
+    std::thread io_thread([&io]() { io.run(); });
 
     // 2. gRPC 채널 생성 (동기/비동기 클라이언트가 공유 - Task D)
     const std::string server_address = "localhost:5001";
@@ -96,7 +149,7 @@ int main() {
     // NPC 엔티티 생성
     size_t npc_count = 0;
     for (const auto& agent : bootstrap.agents) {
-        if (agent.agent_id == "player") {
+        if (agent.agent_id == 1) {
             continue;
         }
 
@@ -120,6 +173,16 @@ int main() {
 
         registry.emplace<LastSyncedComp>(entity, agent.location, agent.emotion, agent.activity);
 
+        // 🆕 성격 및 관계 데이터 초기 연동
+        registry.emplace<PersonalityComp>(entity, agent.extroversion);
+        auto& rel_cache = registry.emplace<RelationshipCacheComp>(entity);
+        for (const auto& rel_snap : agent.relationships) {
+            RelationshipEntry entry;
+            entry.liking = rel_snap.liking;
+            entry.trust = rel_snap.trust;
+            rel_cache.relationships[rel_snap.target_agent_id] = entry;
+        }
+
         npc_count++;
     }
 
@@ -133,15 +196,17 @@ int main() {
     std::uniform_real_distribution<> dis(0.0, 1.0);
 
     int tick = 0; // 동기화 완료된 마지막 틱
-    std::unordered_map<std::string, PendingDialogue> pendingDialogues;
-    std::unordered_set<std::string> busyAgentIdsFromCSharp;
+    std::unordered_map<uint64_t, PendingDialogue> pendingDialogues;
+    std::unordered_set<uint32_t> busyAgentIdsFromCSharp;
+    GrpcResultQueue grpc_queue;
 
     bool is_first_loop = true;
     bool is_tick_sync_pending = false;
 
     // 결정론적(Determinism) 업데이트 조율용 플래그 및 캐시 변수 (Task G)
     std::atomic<bool> tick_synced_ready(false);
-    std::vector<std::string> temp_busy_agent_ids;
+    std::vector<uint32_t> temp_busy_agent_ids;
+    std::vector<MundusVivens::RelationshipDelta> temp_relationship_deltas;
     std::string temp_message;
     int next_tick_val = 0;
 
@@ -149,14 +214,14 @@ int main() {
     GameLoop loop(20.0);
 
     loop.Run([&](int physical_tick) {
-        // 1. Boost.Asio I/O 이벤트 처리 (소켓 수신 및 gRPC 완료 콜백 메인스레드 재개 디스패치 - Task E)
-        io.poll();
+        // 1. gRPC 비동기 결과를 메인 스레드에서 안전하게 실행
+        grpc_queue.Drain(registry, tcp_server, async_client);
 
         // 2. 연결 끊김 감지 및 대화 즉각 정리 시스템
-        SystemCleanupDisconnectedPlayerDialogues(registry, spatial_grid, tcp_server, async_client);
+        SystemCleanupDisconnectedPlayerDialogues(registry, spatial_grid, tcp_server, async_client, grpc_queue);
 
         // 3. 매 프레임(50ms)마다 플레이어 패킷 명령어 즉각 처리 (이동, 대화 메시지 등)
-        SystemPlayerCommands(registry, spatial_grid, tcp_server, async_client, tick);
+        SystemPlayerCommands(registry, spatial_grid, tcp_server, async_client, tick, grpc_queue);
 
         // 4. 틱 동기화가 완료된 경우, 메인 프레임 동기화 타이밍에 맞추어 모든 시스템 결정론적 순차 실행 (Task G)
         if (tick_synced_ready.exchange(false)) {
@@ -165,6 +230,20 @@ int main() {
             busyAgentIdsFromCSharp.insert(temp_busy_agent_ids.begin(), temp_busy_agent_ids.end());
             
             std::cout << "⏱️ [틱 동기화 완료] 틱 번호 " << tick << "가 C# 서버에 동기화되었습니다. 메시지: " << temp_message << std::endl;
+
+            // 🆕 관계 변동치(RelationshipDelta) 반영
+            for (const auto& delta : temp_relationship_deltas) {
+                auto it = entity_index.by_npc_id.find(delta.from_agent_id);
+                if (it != entity_index.by_npc_id.end()) {
+                    auto entity = it->second;
+                    auto& rel_cache = registry.get_or_emplace<RelationshipCacheComp>(entity);
+                    auto& entry = rel_cache.relationships[delta.to_agent_id];
+                    entry.liking = delta.liking;
+                    entry.trust = delta.trust;
+                    std::cout << "🤝 [관계 동기화] " << delta.from_agent_id << " -> " << delta.to_agent_id 
+                              << " (Liking: " << entry.liking << ", Trust: " << entry.trust << ")" << std::endl;
+                }
+            }
 
             // 🆕 바쁨 상태 동기화 시스템 구동
             SystemUpdateBusyState(registry, pendingDialogues, busyAgentIdsFromCSharp);
@@ -207,13 +286,13 @@ int main() {
             SystemScheduleMovement(registry, spatial_grid, tick);
 
             // 비동기 대화 결과 수거 및 데이터 반영
-            SystemPollDialogueResults(registry, spatial_grid, async_client, tick, pendingDialogues);
+            SystemPollDialogueResults(registry, spatial_grid, async_client, tick, pendingDialogues, grpc_queue);
 
             // 동일 공간 인접 검사 및 새 대화 비동기 트리거
-            SystemSpatialDialogueTrigger(registry, spatial_grid, async_client, tick, pendingDialogues, gen, dis);
+            SystemSpatialDialogueTrigger(registry, spatial_grid, async_client, tick, pendingDialogues, gen, dis, grpc_queue);
 
             // 네트워크 동기화
-            SystemNetworkSync(registry, async_client);
+            SystemNetworkSync(registry, async_client, grpc_queue);
 
             // 월드 상태 스냅샷 클라이언트 브로드캐스트
             SystemBroadcastWorldSnapshot(registry, tcp_server, tick);
@@ -227,18 +306,20 @@ int main() {
                 std::cout << "\n================== [ C++ 월드 루프 틱 " << target_tick << " ] ==================" << std::endl;
 
                 // 비동기로 C# 서버에 월드 틱 동기화 신호 전송
-                async_client.ProcessWorldTickAsync(target_tick, [&, target_tick](bool success, const std::string& message, const std::vector<std::string>& busy_agent_ids) {
-                    is_tick_sync_pending = false;
-                    
-                    if (success) {
-                        // 결과만 캐시에 임시 저장하고, 메인 게임 루프 틱 스케줄 단계에서 결정론적으로 반영하도록 함 (Task G)
-                        next_tick_val = target_tick;
-                        temp_busy_agent_ids = busy_agent_ids;
-                        temp_message = message;
-                        tick_synced_ready = true;
-                    } else {
-                        std::cerr << "❌ [틱 동기화 에러] 틱 " << target_tick << " 동기화 실패. 다음 논리 주기(5초 후)에 재시도합니다: " << message << std::endl;
-                    }
+                async_client.ProcessWorldTickAsync(target_tick, [&grpc_queue, &is_tick_sync_pending, &next_tick_val, &temp_busy_agent_ids, &temp_relationship_deltas, &temp_message, &tick_synced_ready, target_tick](bool success, const std::string& message, const std::vector<uint32_t>& busy_agent_ids, const std::vector<MundusVivens::RelationshipDelta>& relationship_deltas) {
+                    grpc_queue.Push([success, message, busy_agent_ids, relationship_deltas, target_tick, &is_tick_sync_pending, &next_tick_val, &temp_busy_agent_ids, &temp_relationship_deltas, &temp_message, &tick_synced_ready](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+                        is_tick_sync_pending = false;
+                        if (success) {
+                            // 결과만 캐시에 임시 저장하고, 메인 게임 루프 틱 스케줄 단계에서 결정론적으로 반영하도록 함 (Task G)
+                            next_tick_val = target_tick;
+                            temp_busy_agent_ids = busy_agent_ids;
+                            temp_relationship_deltas = relationship_deltas;
+                            temp_message = message;
+                            tick_synced_ready = true;
+                        } else {
+                            std::cerr << "❌ [틱 동기화 에러] 틱 " << target_tick << " 동기화 실패. 다음 논리 주기(5초 후)에 재시도합니다: " << message << std::endl;
+                        }
+                    });
                 });
             }
         }
@@ -248,6 +329,12 @@ int main() {
     // -------------------------------------------------------------
     // Graceful Shutdown: 남아있는 pending 대화 NPC 상태 원복 및 스레드 자원 정리
     // -------------------------------------------------------------
+    io_work_guard.reset();
+    io.stop();
+    if (io_thread.joinable()) {
+        io_thread.join();
+    }
+
     grpc_ctx.stop();
     if (grpc_thread.joinable()) {
         grpc_thread.join();
@@ -257,25 +344,25 @@ int main() {
         std::cout << "\n🧹 [종료 정리] 진행 중인 대화가 남아있어 NPC 상태를 원복합니다..." << std::endl;
         std::vector<MundusVivens::AgentStatusUpdate> shutdown_updates;
         for (const auto& [task_id, pd] : pendingDialogues) {
-            std::string name_a = registry.valid(pd.npc_a) ? registry.get<IdentityComp>(pd.npc_a).display_name : "Unknown";
-            std::string name_b = registry.valid(pd.npc_b) ? registry.get<IdentityComp>(pd.npc_b).display_name : "Unknown";
-
-            if (registry.valid(pd.npc_a)) {
-                registry.get<ActivityComp>(pd.npc_a).current_activity = "대기";
-                const auto& identityA = registry.get<IdentityComp>(pd.npc_a);
-                const auto& locationA = registry.get<LocationComp>(pd.npc_a);
-                const auto& emotionA = registry.get<EmotionComp>(pd.npc_a);
-                shutdown_updates.push_back({identityA.npc_id, locationA.location_name, emotionA.current_emotion, "대기"});
+            std::string participant_names = "";
+            for (auto ent : pd.participants) {
+                if (registry.valid(ent)) {
+                    participant_names += registry.get<IdentityComp>(ent).display_name + " ";
+                    registry.get<ActivityComp>(ent).current_activity = "대기";
+                    const auto& identity = registry.get<IdentityComp>(ent);
+                    const auto& location = registry.get<LocationComp>(ent);
+                    const auto& emotion = registry.get<EmotionComp>(ent);
+                    
+                    MundusVivens::AgentStatusUpdate update;
+                    update.agent_id = identity.npc_id;
+                    update.location = location.location_name;
+                    update.emotion = emotion.current_emotion;
+                    update.activity = "대기";
+                    shutdown_updates.push_back(update);
+                }
             }
-            if (registry.valid(pd.npc_b)) {
-                registry.get<ActivityComp>(pd.npc_b).current_activity = "대기";
-                const auto& identityB = registry.get<IdentityComp>(pd.npc_b);
-                const auto& locationB = registry.get<LocationComp>(pd.npc_b);
-                const auto& emotionB = registry.get<EmotionComp>(pd.npc_b);
-                shutdown_updates.push_back({identityB.npc_id, locationB.location_name, emotionB.current_emotion, "대기"});
-            }
 
-            std::cout << "  - " << name_a << "와(과) " << name_b << "을(를) '대기' 상태로 복원 준비." << std::endl;
+            std::cout << "  - (" << participant_names << ")을(를) '대기' 상태로 복원 준비." << std::endl;
         }
         if (!shutdown_updates.empty()) {
             int32_t count = 0;

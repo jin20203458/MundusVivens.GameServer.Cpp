@@ -27,15 +27,15 @@ void AsyncGrpcClient::ProcessWorldTickAsync(int32_t tick, TickCallback on_comple
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::TriggerDialogueAsync(std::string agent_id_a, std::string agent_id_b, DialogueCallback on_complete) {
+void AsyncGrpcClient::TriggerDialogueAsync(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoTriggerDialogue(std::move(agent_id_a), std::move(agent_id_b), std::move(on_complete)),
+        DoTriggerDialogue(participant_ids, std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::PollDialogueResultAsync(std::string task_id, DialogueCallback on_complete) {
+void AsyncGrpcClient::PollDialogueResultAsync(uint64_t task_id, DialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoPollDialogueResult(std::move(task_id), std::move(on_complete)),
+        DoPollDialogueResult(task_id, std::move(on_complete)),
         boost::asio::detached);
 }
 
@@ -45,21 +45,21 @@ void AsyncGrpcClient::BatchUpdateStatusAsync(std::vector<AgentStatusUpdate> upda
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::StartPlayerDialogueAsync(std::string player_id, std::string npc_id, StartDialogueCallback on_complete) {
+void AsyncGrpcClient::StartPlayerDialogueAsync(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoStartPlayerDialogue(std::move(player_id), std::move(npc_id), std::move(on_complete)),
+        DoStartPlayerDialogue(std::move(player_id), npc_id, std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::SendPlayerMessageAsync(std::string session_id, std::string message, SendPlayerMessageCallback on_complete) {
+void AsyncGrpcClient::SendPlayerMessageAsync(uint64_t session_id, std::string message, SendPlayerMessageCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoSendPlayerMessage(std::move(session_id), std::move(message), std::move(on_complete)),
+        DoSendPlayerMessage(session_id, std::move(message), std::move(on_complete)),
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::EndPlayerDialogueAsync(std::string session_id, EndDialogueCallback on_complete) {
+void AsyncGrpcClient::EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCallback on_complete) {
     boost::asio::co_spawn(io_ctx_,
-        DoEndPlayerDialogue(std::move(session_id), std::move(on_complete)),
+        DoEndPlayerDialogue(session_id, std::move(on_complete)),
         boost::asio::detached);
 }
 
@@ -83,10 +83,20 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoProcessWorldTick(int32_t tick, T
         );
 
         if (status.ok()) {
-            std::vector<std::string> busy_ids(response.busy_agent_ids().begin(), response.busy_agent_ids().end());
-            on_complete(response.success(), response.message(), busy_ids);
+            std::vector<uint32_t> busy_ids(response.busy_agent_ids().begin(), response.busy_agent_ids().end());
+            std::vector<RelationshipDelta> relationship_deltas;
+            for (int i = 0; i < response.relationship_deltas_size(); ++i) {
+                const auto& proto_delta = response.relationship_deltas(i);
+                RelationshipDelta delta;
+                delta.from_agent_id = proto_delta.from_agent_id();
+                delta.to_agent_id = proto_delta.to_agent_id();
+                delta.liking = proto_delta.liking();
+                delta.trust = proto_delta.trust();
+                relationship_deltas.push_back(delta);
+            }
+            on_complete(response.success(), response.message(), busy_ids, relationship_deltas);
         } else {
-            on_complete(false, "gRPC error: " + status.error_message(), {});
+            on_complete(false, "gRPC error: " + status.error_message(), {}, {});
         }
     } catch (const std::exception& e) {
         std::cerr << "❌ [Exception in ProcessWorldTickAsync] " << e.what() << std::endl;
@@ -95,15 +105,20 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoProcessWorldTick(int32_t tick, T
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::string agent_id_a, std::string agent_id_b, DialogueCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncTriggerDialogue>;
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
 
         mundusvivens::TriggerDialogueRequest request;
-        request.set_agent_id_a(agent_id_a);
-        request.set_agent_id_b(agent_id_b);
+        if (participant_ids.size() >= 2) {
+            request.set_agent_id_a(participant_ids[0]);
+            request.set_agent_id_b(participant_ids[1]);
+        }
+        for (uint32_t pid : participant_ids) {
+            request.add_participant_ids(pid);
+        }
         request.set_wait_for_completion(false);
         mundusvivens::TriggerDialogueResponse response;
 
@@ -147,7 +162,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::string agen
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoPollDialogueResult(std::string task_id, DialogueCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoPollDialogueResult(uint64_t task_id, DialogueCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncGetDialogueResult>;
         grpc::ClientContext context;
@@ -229,7 +244,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoBatchUpdateStatus(std::vector<Ag
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoStartPlayerDialogue(std::string player_id, std::string npc_id, StartDialogueCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoStartPlayerDialogue(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncStartPlayerDialogue>;
         grpc::ClientContext context;
@@ -247,14 +262,14 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoStartPlayerDialogue(std::string 
         if (status.ok()) {
             on_complete(response.success(), response.session_id(), response.greeting(), response.message());
         } else {
-            on_complete(false, "", "", "gRPC error: " + status.error_message());
+            on_complete(false, 0, "", "gRPC error: " + status.error_message());
         }
     } catch (const std::exception& e) {
         std::cerr << "❌ [Exception in StartPlayerDialogueAsync] " << e.what() << std::endl;
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoSendPlayerMessage(std::string session_id, std::string message, SendPlayerMessageCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoSendPlayerMessage(uint64_t session_id, std::string message, SendPlayerMessageCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncSendPlayerMessage>;
         grpc::ClientContext context;
@@ -279,7 +294,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoSendPlayerMessage(std::string se
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoEndPlayerDialogue(std::string session_id, EndDialogueCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoEndPlayerDialogue(uint64_t session_id, EndDialogueCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncEndPlayerDialogue>;
         grpc::ClientContext context;
@@ -300,6 +315,38 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoEndPlayerDialogue(std::string se
         }
     } catch (const std::exception& e) {
         std::cerr << "❌ [Exception in EndPlayerDialogueAsync] " << e.what() << std::endl;
+    }
+}
+
+void AsyncGrpcClient::InjectGossipAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
+    boost::asio::co_spawn(io_ctx_,
+        DoInjectGossip(target_agent_id, subject_id, std::move(content), std::move(on_complete)),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> AsyncGrpcClient::DoInjectGossip(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
+    try {
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncInjectGossip>;
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        mundusvivens::InjectGossipRequest request;
+        request.set_target_agent_id(target_agent_id);
+        request.set_subject_id(subject_id);
+        request.set_content(content);
+        mundusvivens::InjectGossipResponse response;
+
+        const grpc::Status status = co_await RPC::request(
+            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
+        );
+
+        if (status.ok()) {
+            on_complete(response.success(), response.message());
+        } else {
+            on_complete(false, "gRPC error: " + status.error_message());
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception in InjectGossipAsync] " << e.what() << std::endl;
     }
 }
 

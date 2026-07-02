@@ -16,12 +16,13 @@ namespace MundusVivens {
 
 class AsyncGrpcClient {
 public:
-    using TickCallback = std::function<void(bool success, const std::string& message, const std::vector<std::string>& busy_agent_ids)>;
+    using TickCallback = std::function<void(bool success, const std::string& message, const std::vector<uint32_t>& busy_agent_ids, const std::vector<RelationshipDelta>& relationship_deltas)>;
     using DialogueCallback = std::function<void(bool success, const DialogueResult& result)>;
     using StatusCallback = std::function<void(bool success, int32_t updated_count, const std::string& message)>;
-    using StartDialogueCallback = std::function<void(bool success, const std::string& session_id, const std::string& greeting, const std::string& message)>;
+    using StartDialogueCallback = std::function<void(bool success, uint64_t session_id, const std::string& greeting, const std::string& message)>;
     using SendPlayerMessageCallback = std::function<void(bool success, const std::string& reply)>;
     using EndDialogueCallback = std::function<void(bool success, const std::string& summary)>;
+    using InjectGossipCallback = std::function<void(bool success, const std::string& message)>;
 
     // 생성자에서 채널, GrpcContext, io_context를 모두 공유받음
     AsyncGrpcClient(std::shared_ptr<grpc::Channel> channel,
@@ -30,24 +31,28 @@ public:
     ~AsyncGrpcClient();
 
     void ProcessWorldTickAsync(int32_t tick, TickCallback on_complete);
-    void TriggerDialogueAsync(std::string agent_id_a, std::string agent_id_b, DialogueCallback on_complete);
-    void PollDialogueResultAsync(std::string task_id, DialogueCallback on_complete);
+    void TriggerDialogueAsync(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete);
+    void PollDialogueResultAsync(uint64_t task_id, DialogueCallback on_complete);
     void BatchUpdateStatusAsync(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete);
 
     // 플레이어 상호작용 관련 비동기 gRPC
-    void StartPlayerDialogueAsync(std::string player_id, std::string npc_id, StartDialogueCallback on_complete);
-    void SendPlayerMessageAsync(std::string session_id, std::string message, SendPlayerMessageCallback on_complete);
-    void EndPlayerDialogueAsync(std::string session_id, EndDialogueCallback on_complete);
+    void StartPlayerDialogueAsync(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete);
+    void SendPlayerMessageAsync(uint64_t session_id, std::string message, SendPlayerMessageCallback on_complete);
+    void EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCallback on_complete);
+
+    // 🆕 비동기 소문 주입
+    void InjectGossipAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete);
 
 
 private:
     boost::asio::awaitable<void> DoProcessWorldTick(int32_t tick, TickCallback on_complete);
-    boost::asio::awaitable<void> DoTriggerDialogue(std::string agent_id_a, std::string agent_id_b, DialogueCallback on_complete);
-    boost::asio::awaitable<void> DoPollDialogueResult(std::string task_id, DialogueCallback on_complete);
+    boost::asio::awaitable<void> DoTriggerDialogue(const std::vector<uint32_t>& participant_ids, DialogueCallback on_complete);
+    boost::asio::awaitable<void> DoPollDialogueResult(uint64_t task_id, DialogueCallback on_complete);
     boost::asio::awaitable<void> DoBatchUpdateStatus(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete);
-    boost::asio::awaitable<void> DoStartPlayerDialogue(std::string player_id, std::string npc_id, StartDialogueCallback on_complete);
-    boost::asio::awaitable<void> DoSendPlayerMessage(std::string session_id, std::string message, SendPlayerMessageCallback on_complete);
-    boost::asio::awaitable<void> DoEndPlayerDialogue(std::string session_id, EndDialogueCallback on_complete);
+    boost::asio::awaitable<void> DoStartPlayerDialogue(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete);
+    boost::asio::awaitable<void> DoSendPlayerMessage(uint64_t session_id, std::string message, SendPlayerMessageCallback on_complete);
+    boost::asio::awaitable<void> DoEndPlayerDialogue(uint64_t session_id, EndDialogueCallback on_complete);
+    boost::asio::awaitable<void> DoInjectGossip(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete);
 
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;
     agrpc::GrpcContext& grpc_ctx_;

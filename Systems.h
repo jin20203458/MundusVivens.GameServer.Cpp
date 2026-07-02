@@ -8,11 +8,15 @@
 #include "AsyncGrpcClient.h"
 #include "SpatialHashGrid.h"
 
+#include <boost/container/small_vector.hpp>
+
+class TcpServer;
+class GrpcResultQueue;
+
 // 비동기 진행 중인 대화 트래킹을 위한 구조체
 struct PendingDialogue {
-    std::string task_id;
-    entt::entity npc_a = entt::null;
-    entt::entity npc_b = entt::null;
+    uint64_t task_id = 0;
+    boost::container::small_vector<entt::entity, 10> participants;
     int triggered_tick = 0;
     std::string meeting_location; // 대화 시작 장소 스냅샷
     bool poll_requested = false;  // 🆕 중복 비동기 폴링을 방지하기 위한 플래그
@@ -23,8 +27,8 @@ bool IsNPCFocusedOnActivity(const std::string& activity, double roll);
 
 // 바쁨 상태 동기화 시스템 (IsNpcBusy 대체)
 void SystemUpdateBusyState(entt::registry& reg,
-                           const std::unordered_map<std::string, PendingDialogue>& pendings,
-                           const std::unordered_set<std::string>& busyAgentIdsFromCSharp);
+                           const std::unordered_map<uint64_t, PendingDialogue>& pendings,
+                           const std::unordered_set<uint32_t>& busyAgentIdsFromCSharp);
 
 // 시스템 함수 정의
 void SystemEmotionDecay(entt::registry& reg);
@@ -33,21 +37,22 @@ void SystemScheduleMovement(entt::registry& reg, SpatialHashGrid& grid, int curr
 
 void SystemPollDialogueResults(entt::registry& reg, SpatialHashGrid& grid,
                                MundusVivens::AsyncGrpcClient& client, int tick,
-                               std::unordered_map<std::string, PendingDialogue>& pendingDialogues);
+                               std::unordered_map<uint64_t, PendingDialogue>& pendingDialogues,
+                               GrpcResultQueue& grpc_queue);
 
 void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
-                                  std::unordered_map<std::string, PendingDialogue>& pendingDialogues,
-                                  std::mt19937& gen, std::uniform_real_distribution<>& dis);
+                                  std::unordered_map<uint64_t, PendingDialogue>& pendingDialogues,
+                                  std::mt19937& gen, std::uniform_real_distribution<>& dis,
+                                  GrpcResultQueue& grpc_queue);
 
-void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& client);
+void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
 // 플레이어 및 클라이언트 네트워크 연동 시스템
-class TcpServer;
-void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client);
+void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue);
 
 void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
-                          MundusVivens::AsyncGrpcClient& async_client, int tick);
+                          MundusVivens::AsyncGrpcClient& async_client, int tick, GrpcResultQueue& grpc_queue);
 
 void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick);
 

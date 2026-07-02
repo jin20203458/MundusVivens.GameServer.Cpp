@@ -12,6 +12,10 @@ TcpServer::TcpServer(boost::asio::io_context& io, uint16_t port)
 }
 
 TcpServer::~TcpServer() {
+    is_running_ = false;
+    boost::system::error_code ec;
+    acceptor_.close(ec);
+
     // 모든 세션 정리
     std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
     sessions_.clear();
@@ -48,6 +52,9 @@ boost::asio::awaitable<void> TcpServer::AcceptLoop() {
             // 해당 세션의 비동기 수신 루프를 코루틴으로 구동
             boost::asio::co_spawn(io_, session->Run(), boost::asio::detached);
         } catch (const std::exception& e) {
+            if (!is_running_) {
+                co_return;
+            }
             std::cerr << "[TCP Server] Accept 루프 예외 발생: " << e.what() 
                       << ". 1초 대기 후 복구를 시도합니다." << std::endl;
             has_error = true;

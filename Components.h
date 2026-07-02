@@ -7,8 +7,24 @@
 
 // NPC 식별 정보 (NpcIds, NpcNames 대체)
 struct IdentityComp {
-    std::string npc_id;
+    uint32_t npc_id = 0;
     std::string display_name;
+};
+
+// 🆕 성격 정보 (외향성)
+struct PersonalityComp {
+    float extroversion = 0.5f;
+};
+
+// 🆕 관계 엔트리 (친밀도 Liking, 신뢰도 Trust)
+struct RelationshipEntry {
+    int liking = 0;
+    int trust = 50;
+};
+
+// 🆕 관계망 정보 캐시
+struct RelationshipCacheComp {
+    std::unordered_map<uint32_t, RelationshipEntry> relationships; // 상대 NPC ID -> 관계 정보
 };
 
 // 위치 정보 (CurrentLocations 대체)
@@ -65,13 +81,13 @@ struct PlayerTag {
 
 // 플레이어-NPC 대화 상태를 관리하는 컴포넌트
 struct PlayerDialogueComp {
-    std::string session_id;       // C# AI 서버가 발급한 플레이어 대화 세션 ID
+    uint64_t session_id = 0;       // C# AI 서버가 발급한 플레이어 대화 세션 ID
     entt::entity npc_entity = entt::null; // 대화 상대 NPC 엔티티 핸들
 };
 
 // 역방향 인덱스 리소스 (EnTT registry.ctx()에 저장용)
 struct EntityIndex {
-    std::unordered_map<std::string, entt::entity> by_npc_id;       // "npc_eva" -> entity
+    std::unordered_map<uint32_t, entt::entity>    by_npc_id;       // NPC ID -> entity
     std::unordered_map<uint32_t, entt::entity>    by_session_index; // 세션 번호 -> entity
 };
 

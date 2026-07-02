@@ -9,7 +9,7 @@ namespace MundusVivens {
         stub_ = mundusvivens::MundusVivensGrpc::NewStub(channel);
     }
 
-    DialogueResult MundusVivensClient::TriggerDialogue(const std::string& agent_id_a, const std::string& agent_id_b, bool wait_for_completion) {
+    DialogueResult MundusVivensClient::TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b, bool wait_for_completion) {
         // 1. 원격 서버로 송신할 요청(Request) 패킷 데이터 설정
         mundusvivens::TriggerDialogueRequest request;
         request.set_agent_id_a(agent_id_a);
@@ -64,7 +64,7 @@ namespace MundusVivens {
         return result;
     }
 
-    AgentStatus MundusVivensClient::GetAgentStatus(const std::string& agent_id) {
+    AgentStatus MundusVivensClient::GetAgentStatus(uint32_t agent_id) {
         // 1. 특정 에이전트 식별자(ID)를 요청 패킷에 세팅
         mundusvivens::GetAgentStatusRequest request;
         request.set_agent_id(agent_id);
@@ -95,7 +95,7 @@ namespace MundusVivens {
         return result;
     }
 
-    bool MundusVivensClient::InjectGossip(const std::string& target_agent_id, const std::string& subject_id, const std::string& content, std::string& out_message) {
+    bool MundusVivensClient::InjectGossip(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, std::string& out_message) {
         // 1. 소문을 주입할 대상 NPC, 소문의 주인공, 소문 내용 패킷 세팅
         mundusvivens::InjectGossipRequest request;
         request.set_target_agent_id(target_agent_id);
@@ -119,7 +119,7 @@ namespace MundusVivens {
         }
     }
 
-    bool MundusVivensClient::UpdateAgentStatus(const std::string& agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message) {
+    bool MundusVivensClient::UpdateAgentStatus(uint32_t agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message) {
         // 1. C++ 게임 월드에서 결정된 NPC의 최신 상태(위치, 감정, 현재 행동)를 패킷에 세팅
         mundusvivens::UpdateAgentStatusRequest request;
         request.set_agent_id(agent_id);
@@ -172,7 +172,7 @@ namespace MundusVivens {
         }
     }
 
-    bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<std::string>& out_busy_agent_ids) {
+    bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<uint32_t>& out_busy_agent_ids) {
         // 1. C++ 메인 루프에서 전진한 현재의 월드 틱 넘버를 패킷에 세팅
         mundusvivens::ProcessWorldTickRequest request;
         request.set_tick_number(tick_number);
@@ -198,11 +198,11 @@ namespace MundusVivens {
         }
     }
 
-    DialogueResult MundusVivensClient::TriggerDialogueAsync(const std::string& agent_id_a, const std::string& agent_id_b) {
+    DialogueResult MundusVivensClient::TriggerDialogueAsync(uint32_t agent_id_a, uint32_t agent_id_b) {
         return TriggerDialogue(agent_id_a, agent_id_b, false);
     }
 
-    DialogueResult MundusVivensClient::PollDialogueResult(const std::string& task_id) {
+    DialogueResult MundusVivensClient::PollDialogueResult(uint64_t task_id) {
         mundusvivens::GetDialogueResultRequest request;
         request.set_task_id(task_id);
 
@@ -271,6 +271,15 @@ namespace MundusVivens {
                 agent.location = proto_agent.location();
                 agent.emotion = proto_agent.emotion();
                 agent.activity = proto_agent.activity();
+                agent.extroversion = proto_agent.extroversion();
+                for (int j = 0; j < proto_agent.relationships_size(); ++j) {
+                    const auto& proto_rel = proto_agent.relationships(j);
+                    RelationshipSnapshot snapshot;
+                    snapshot.target_agent_id = proto_rel.target_agent_id();
+                    snapshot.liking = proto_rel.liking();
+                    snapshot.trust = proto_rel.trust();
+                    agent.relationships.push_back(snapshot);
+                }
                 result.agents.push_back(agent);
             }
         }

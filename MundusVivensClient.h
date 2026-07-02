@@ -9,18 +9,18 @@
 namespace MundusVivens {
 
 struct DialogueLine {
-    std::string speaker_id;
+    uint32_t speaker_id;
     std::string speaker_name;
     std::string text;
 };
 
 struct AgentEmotionUpdate {
-    std::string agent_id;
+    uint32_t agent_id;
     std::string new_emotion;
 };
 
 struct DialogueResult {
-    std::string task_id;
+    uint64_t task_id;
     bool is_queued = false;
     bool is_completed = false;
     bool completed_immediately = false;
@@ -31,14 +31,30 @@ struct DialogueResult {
     bool has_error = false; // 🆕 통신 장애 발생 플래그
 };
 
+struct RelationshipSnapshot {
+    uint32_t target_agent_id;
+    int32_t liking;
+    int32_t trust;
+};
+
+struct RelationshipDelta {
+    uint32_t from_agent_id;
+    uint32_t to_agent_id;
+    int32_t liking;
+    int32_t trust;
+};
+
 struct InitialAgentState {
-    std::string agent_id;
+    uint32_t agent_id;
     std::string name;
     std::string location;
     std::string emotion;
     std::string activity;
+    float extroversion = 0.5f;
+    std::vector<RelationshipSnapshot> relationships;
 };
 
+// 🆕 월드 부트스트랩 데이터 구조체
 struct WorldBootstrapData {
     std::vector<std::string> locations;
     std::vector<InitialAgentState> agents;
@@ -52,7 +68,7 @@ struct DailyScheduleItem {
 };
 
 struct DailySchedule {
-    std::string agent_id;
+    uint32_t agent_id;
     std::vector<DailyScheduleItem> items;
 };
 
@@ -66,7 +82,7 @@ struct AgentStatus {
 
 // 🆕 배치 상태 업데이트용 구조체
 struct AgentStatusUpdate {
-    std::string agent_id;
+    uint32_t agent_id;
     std::string location;
     std::string emotion;
     std::string activity;
@@ -79,28 +95,28 @@ public:
 
     // NPC 간 대화를 트리거합니다.
     // wait_for_completion이 true이면 대화가 끝날 때까지 대기(동기적)하며 결과를 반환합니다.
-    DialogueResult TriggerDialogue(const std::string& agent_id_a, const std::string& agent_id_b, bool wait_for_completion = true);
+    DialogueResult TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b, bool wait_for_completion = true);
 
     // 🆕 비동기 대화 트리거 (wait_for_completion = false 호출)
-    DialogueResult TriggerDialogueAsync(const std::string& agent_id_a, const std::string& agent_id_b);
+    DialogueResult TriggerDialogueAsync(uint32_t agent_id_a, uint32_t agent_id_b);
 
     // 🆕 대화 결과 조회 폴링 API
-    DialogueResult PollDialogueResult(const std::string& task_id);
+    DialogueResult PollDialogueResult(uint64_t task_id);
 
     // 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
-    AgentStatus GetAgentStatus(const std::string& agent_id);
+    AgentStatus GetAgentStatus(uint32_t agent_id);
 
     // 에바와 같은 특정 에이전트에게 소문을 강제로 주입합니다.
-    bool InjectGossip(const std::string& target_agent_id, const std::string& subject_id, const std::string& content, std::string& out_message);
+    bool InjectGossip(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, std::string& out_message);
 
     // C++ 게임 서버가 결정한 에이전트의 최신 상태(위치, 감정, 현재 상태)를 C# 서버로 동기화합니다.
-    bool UpdateAgentStatus(const std::string& agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message);
+    bool UpdateAgentStatus(uint32_t agent_id, const std::string& location, const std::string& emotion, const std::string& activity, std::string& out_message);
 
     // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
     bool BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message);
 
     // C++ 게임 서버의 틱(시간 흐름) 진행을 C# AI 서버에 알립니다.
-    bool ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<std::string>& out_busy_agent_ids);
+    bool ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<uint32_t>& out_busy_agent_ids);
 
     // 🆕 월드 부트스트랩 데이터 조회
     WorldBootstrapData GetWorldBootstrap();
