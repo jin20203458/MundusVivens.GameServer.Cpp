@@ -160,7 +160,7 @@ int main() {
         entity_index.by_npc_id[agent.agent_id] = entity;
 
         uint32_t zone_id = spatial_grid.GetOrCreateZoneId(agent.location);
-        registry.emplace<LocationComp>(entity, zone_id, agent.location);
+        registry.emplace<LocationComp>(entity, zone_id, agent.location, agent.x, agent.y, agent.z);
         spatial_grid.Insert(entity, zone_id);
 
         registry.emplace<ActivityComp>(entity, agent.activity);
@@ -353,6 +353,9 @@ int main() {
             MundusVivens::AgentStatusUpdate update;
             update.agent_id = identity.npc_id;
             update.location = location.location_name;
+            update.x = location.x;
+            update.y = location.y;
+            update.z = location.z;
             update.emotion = emotion.current_emotion;
             update.activity = "대기";
             shutdown_updates.push_back(update);

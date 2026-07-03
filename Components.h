@@ -31,6 +31,9 @@ struct RelationshipCacheComp {
 struct LocationComp {
     uint32_t zone_id = 0;
     std::string location_name;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
 };
 
 // 감정 상태 (CurrentEmotions, BaseEmotions, EmotionDecayTicks 통합)
@@ -56,6 +59,9 @@ struct CooldownComp {
 struct JobComp {
     uint64_t job_id = 0;
     std::string target_location;
+    float target_x = 0.0f;
+    float target_y = 0.0f;
+    float target_z = 0.0f;
     std::string intent;
     uint32_t target_agent_id = 0;
     int32_t priority = 0;

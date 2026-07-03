@@ -155,7 +155,10 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
                 MundusVivensClient::JobPayload job;
                 job.npc_id = proto_job.npc_id();
                 job.job_id = proto_job.job_id();
-                job.target_location = proto_job.target_location();
+                job.target_location = proto_job.target_location().name();
+                job.target_x = proto_job.target_location().position().x();
+                job.target_y = proto_job.target_location().position().y();
+                job.target_z = proto_job.target_location().position().z();
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
@@ -182,7 +185,12 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoBatchUpdateStatus(std::vector<Ag
         for (const auto& update : updates) {
             auto* agent_req = request.add_agents();
             agent_req->set_agent_id(update.agent_id);
-            agent_req->set_location(update.location);
+            auto* loc = agent_req->mutable_location();
+            loc->set_name(update.location);
+            auto* pos = loc->mutable_position();
+            pos->set_x(update.x);
+            pos->set_y(update.y);
+            pos->set_z(update.z);
             agent_req->set_emotion(update.emotion);
             agent_req->set_activity(update.activity);
         }
@@ -330,7 +338,10 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoGetPendingJobs(int32_t current_t
                 MundusVivensClient::JobPayload job;
                 job.npc_id = proto_job.npc_id();
                 job.job_id = proto_job.job_id();
-                job.target_location = proto_job.target_location();
+                job.target_location = proto_job.target_location().name();
+                job.target_x = proto_job.target_location().position().x();
+                job.target_y = proto_job.target_location().position().y();
+                job.target_z = proto_job.target_location().position().z();
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
@@ -378,7 +389,10 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoReportJobStatus(uint32_t npc_id,
                 const auto& proto_job = response.new_job();
                 new_job.npc_id = proto_job.npc_id();
                 new_job.job_id = proto_job.job_id();
-                new_job.target_location = proto_job.target_location();
+                new_job.target_location = proto_job.target_location().name();
+                new_job.target_x = proto_job.target_location().position().x();
+                new_job.target_y = proto_job.target_location().position().y();
+                new_job.target_z = proto_job.target_location().position().z();
                 new_job.intent = proto_job.intent();
                 new_job.target_agent_id = proto_job.target_agent_id();
                 new_job.priority = proto_job.priority();

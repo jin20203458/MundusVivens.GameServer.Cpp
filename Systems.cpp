@@ -233,6 +233,9 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
 
                 loc.location_name = job.target_location;
                 loc.zone_id = new_zone;
+                loc.x = job.target_x;
+                loc.y = job.target_y;
+                loc.z = job.target_z;
 
                 if (new_zone != old_zone) {
                     grid.Move(entity, old_zone, new_zone);
@@ -562,6 +565,9 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                              auto& job = reg.get_or_emplace<JobComp>(target_ent);
                                              job.job_id = nj.job_id;
                                              job.target_location = nj.target_location;
+                                             job.target_x = nj.target_x;
+                                             job.target_y = nj.target_y;
+                                             job.target_z = nj.target_z;
                                              job.intent = nj.intent;
                                              job.target_agent_id = nj.target_agent_id;
                                              job.priority = nj.priority;
@@ -574,6 +580,7 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                              std::cout << "🧠 [C++ 대화 후 동기화 계획 적용] " 
                                                        << reg.get<IdentityComp>(target_ent).display_name 
                                                        << " ➔ 위치: " << nj.target_location 
+                                                       << " (" << nj.target_x << ", " << nj.target_y << ", " << nj.target_z << ")"
                                                        << ", 행동: " << nj.intent << " (Job: " << nj.job_id << ")" << std::endl;
                                          }
                                      }
@@ -654,6 +661,9 @@ void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& clien
             MundusVivens::AgentStatusUpdate update;
             update.agent_id = identity.npc_id;
             update.location = loc.location_name;
+            update.x = loc.x;
+            update.y = loc.y;
+            update.z = loc.z;
             update.emotion = emo.current_emotion;
             update.activity = act.current_activity;
             updates.push_back(update);
@@ -797,10 +807,29 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             resp.set_success(true);
             resp.set_message("로그인에 성공했습니다.");
 
-            resp.add_locations("광장");
-            resp.add_locations("여관");
-            resp.add_locations("시장");
-            resp.add_locations("성당");
+            auto* loc1 = resp.add_locations();
+            loc1->set_name("광장");
+            loc1->mutable_position()->set_x(0);
+            loc1->mutable_position()->set_y(0);
+            loc1->mutable_position()->set_z(0);
+
+            auto* loc2 = resp.add_locations();
+            loc2->set_name("여관");
+            loc2->mutable_position()->set_x(-15);
+            loc2->mutable_position()->set_y(0);
+            loc2->mutable_position()->set_z(-5);
+
+            auto* loc3 = resp.add_locations();
+            loc3->set_name("시장");
+            loc3->mutable_position()->set_x(30);
+            loc3->mutable_position()->set_y(0);
+            loc3->mutable_position()->set_z(10);
+
+            auto* loc4 = resp.add_locations();
+            loc4->set_name("성당");
+            loc4->mutable_position()->set_x(10);
+            loc4->mutable_position()->set_y(0);
+            loc4->mutable_position()->set_z(50);
 
             // 현재 NPC 전체 상태 추가
             auto npc_view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>(entt::exclude<PlayerTag>);
@@ -808,7 +837,12 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
                 auto* snapshot = resp.add_npcs();
                 snapshot->set_npc_id(npc_id.npc_id);
                 snapshot->set_display_name(npc_id.display_name);
-                snapshot->set_location(npc_loc.location_name);
+                auto* loc_info = snapshot->mutable_location();
+                loc_info->set_name(npc_loc.location_name);
+                auto* pos = loc_info->mutable_position();
+                pos->set_x(npc_loc.x);
+                pos->set_y(npc_loc.y);
+                pos->set_z(npc_loc.z);
                 snapshot->set_emotion(npc_emo.current_emotion);
                 snapshot->set_activity(npc_act.current_activity);
             });
@@ -829,13 +863,19 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
                 auto& loc = reg.get<LocationComp>(player_ent);
                 const auto& identity = reg.get<IdentityComp>(player_ent);
                 std::string old_loc = loc.location_name;
-                std::string new_loc = req.target_location();
+                std::string new_loc = req.target_location().name();
+                float target_x = req.target_location().position().x();
+                float target_y = req.target_location().position().y();
+                float target_z = req.target_location().position().z();
 
                 uint32_t old_zone = loc.zone_id;
                 uint32_t new_zone = grid.GetOrCreateZoneId(new_loc);
 
                 loc.location_name = new_loc;
                 loc.zone_id = new_zone;
+                loc.x = target_x;
+                loc.y = target_y;
+                loc.z = target_z;
                 grid.Move(player_ent, old_zone, new_zone);
 
                 std::cout << "🏃 [TCP 플레이어 이동] 플레이어 " << identity.display_name 
@@ -1031,7 +1071,12 @@ void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick)
         auto* snapshot = payload.add_npcs();
         snapshot->set_npc_id(identity.npc_id);
         snapshot->set_display_name(identity.display_name);
-        snapshot->set_location(loc.location_name);
+        auto* loc_info = snapshot->mutable_location();
+        loc_info->set_name(loc.location_name);
+        auto* pos = loc_info->mutable_position();
+        pos->set_x(loc.x);
+        pos->set_y(loc.y);
+        pos->set_z(loc.z);
         snapshot->set_emotion(emo.current_emotion);
         snapshot->set_activity(act.current_activity);
     });

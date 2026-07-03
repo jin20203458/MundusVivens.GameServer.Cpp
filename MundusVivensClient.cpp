@@ -59,7 +59,10 @@ namespace MundusVivens {
                 JobPayload job;
                 job.npc_id = proto_job.npc_id();
                 job.job_id = proto_job.job_id();
-                job.target_location = proto_job.target_location();
+                job.target_location = proto_job.target_location().name();
+                job.target_x = proto_job.target_location().position().x();
+                job.target_y = proto_job.target_location().position().y();
+                job.target_z = proto_job.target_location().position().z();
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
@@ -91,7 +94,10 @@ namespace MundusVivens {
         AgentStatus result;
         if (status.ok()) {
             result.name = response.name();
-            result.location = response.location();
+            result.location = response.location().name();
+            result.x = response.location().position().x();
+            result.y = response.location().position().y();
+            result.z = response.location().position().z();
             result.emotion = response.emotion();
             result.activity = response.activity();
 
@@ -139,7 +145,12 @@ namespace MundusVivens {
         for (const auto& update : updates) {
             auto* agent_req = request.add_agents();
             agent_req->set_agent_id(update.agent_id);
-            agent_req->set_location(update.location);
+            auto* loc = agent_req->mutable_location();
+            loc->set_name(update.location);
+            auto* pos = loc->mutable_position();
+            pos->set_x(update.x);
+            pos->set_y(update.y);
+            pos->set_z(update.z);
             agent_req->set_emotion(update.emotion);
             agent_req->set_activity(update.activity);
         }
@@ -198,14 +209,17 @@ namespace MundusVivens {
         WorldBootstrapData result;
         if (status.ok()) {
             for (int i = 0; i < response.locations_size(); ++i) {
-                result.locations.push_back(response.locations(i));
+                result.locations.push_back(response.locations(i).name());
             }
             for (int i = 0; i < response.agents_size(); ++i) {
                 const auto& proto_agent = response.agents(i);
                 InitialAgentState agent;
                 agent.agent_id = proto_agent.agent_id();
                 agent.name = proto_agent.name();
-                agent.location = proto_agent.location();
+                agent.location = proto_agent.location().name();
+                agent.x = proto_agent.location().position().x();
+                agent.y = proto_agent.location().position().y();
+                agent.z = proto_agent.location().position().z();
                 agent.emotion = proto_agent.emotion();
                 agent.activity = proto_agent.activity();
                 agent.extroversion = proto_agent.extroversion();
@@ -244,7 +258,10 @@ namespace MundusVivens {
                 JobPayload job;
                 job.npc_id = proto_job.npc_id();
                 job.job_id = proto_job.job_id();
-                job.target_location = proto_job.target_location();
+                job.target_location = proto_job.target_location().name();
+                job.target_x = proto_job.target_location().position().x();
+                job.target_y = proto_job.target_location().position().y();
+                job.target_z = proto_job.target_location().position().z();
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
@@ -275,7 +292,10 @@ namespace MundusVivens {
                 const auto& proto_job = response.new_job();
                 out_new_job.npc_id = proto_job.npc_id();
                 out_new_job.job_id = proto_job.job_id();
-                out_new_job.target_location = proto_job.target_location();
+                out_new_job.target_location = proto_job.target_location().name();
+                out_new_job.target_x = proto_job.target_location().position().x();
+                out_new_job.target_y = proto_job.target_location().position().y();
+                out_new_job.target_z = proto_job.target_location().position().z();
                 out_new_job.intent = proto_job.intent();
                 out_new_job.target_agent_id = proto_job.target_agent_id();
                 out_new_job.priority = proto_job.priority();

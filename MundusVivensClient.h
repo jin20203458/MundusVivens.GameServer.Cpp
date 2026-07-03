@@ -23,6 +23,9 @@ struct JobPayload {
     uint32_t npc_id;
     uint64_t job_id;
     std::string target_location;
+    float target_x = 0.0f;
+    float target_y = 0.0f;
+    float target_z = 0.0f;
     std::string intent;
     uint32_t target_agent_id = 0;
     int32_t priority = 0;
@@ -58,6 +61,9 @@ struct InitialAgentState {
     uint32_t agent_id;
     std::string name;
     std::string location;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
     std::string emotion;
     std::string activity;
     float extroversion = 0.5f;
@@ -70,21 +76,12 @@ struct WorldBootstrapData {
     std::vector<InitialAgentState> agents;
 };
 
-struct DailyScheduleItem {
-    int32_t start_hour = 0;
-    int32_t end_hour = 0;
-    std::string target_location;
-    std::string activity;
-};
-
-struct DailySchedule {
-    uint32_t agent_id;
-    std::vector<DailyScheduleItem> items;
-};
-
 struct AgentStatus {
     std::string name;
     std::string location;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
     std::string emotion;
     std::string activity;
     std::vector<std::string> memories;
@@ -94,6 +91,9 @@ struct AgentStatus {
 struct AgentStatusUpdate {
     uint32_t agent_id;
     std::string location;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
     std::string emotion;
     std::string activity;
 };
