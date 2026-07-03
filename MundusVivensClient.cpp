@@ -9,12 +9,11 @@ namespace MundusVivens {
         stub_ = mundusvivens::MundusVivensGrpc::NewStub(channel);
     }
 
-    DialogueResult MundusVivensClient::TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b, bool wait_for_completion) {
+    DialogueResult MundusVivensClient::TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b) {
         // 1. 원격 서버로 송신할 요청(Request) 패킷 데이터 설정
         mundusvivens::TriggerDialogueRequest request;
         request.set_agent_id_a(agent_id_a);
         request.set_agent_id_b(agent_id_b);
-        request.set_wait_for_completion(wait_for_completion);
 
         mundusvivens::TriggerDialogueResponse response;
         grpc::ClientContext context; // RPC 호출의 타임아웃, 메타데이터 등을 관리하는 컨텍스트 객체

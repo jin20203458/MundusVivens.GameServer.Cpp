@@ -36,9 +36,9 @@ struct DialogueResult {
     std::string dialogue_summary;
     std::vector<std::string> dialogue_lines;
     std::vector<DialogueLine> structured_lines;
-    std::vector<AgentEmotionUpdate> emotion_updates; // 🆕 대화에 의한 감정 변동 리스트
-    std::vector<JobPayload> next_jobs; // 🆕 대화 결과에 따른 다음 행동들
-    bool has_error = false; // 🆕 통신 장애 발생 플래그
+    std::vector<AgentEmotionUpdate> emotion_updates; 
+    std::vector<JobPayload> next_jobs; 
+    bool has_error = false; 
 };
 
 struct RelationshipSnapshot {
@@ -104,7 +104,7 @@ public:
     MundusVivensClient(std::shared_ptr<grpc::Channel> channel);
 
     // NPC 간 대화를 트리거합니다.
-    DialogueResult TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b, bool wait_for_completion = true);
+    DialogueResult TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b);
 
     // 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
     AgentStatus GetAgentStatus(uint32_t agent_id);

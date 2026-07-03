@@ -118,7 +118,6 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
         for (uint32_t pid : participant_ids) {
             request.add_participant_ids(pid);
         }
-        request.set_wait_for_completion(true);
         mundusvivens::TriggerDialogueResponse response;
 
         const grpc::Status status = co_await RPC::request(
