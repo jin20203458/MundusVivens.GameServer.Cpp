@@ -1,6 +1,6 @@
 #pragma once
 #include <boost/asio.hpp>
-#include <boost/lockfree/spsc_queue.hpp>
+#include <boost/asio/experimental/channel.hpp>
 #include <memory>
 #include <vector>
 #include <string>
@@ -66,7 +66,6 @@ private:
     std::atomic<bool> is_reading_suspended_{false};
     boost::asio::steady_timer backpressure_timer_;
 
-    // 전송 큐 (락프리 SPSC Queue)
-    boost::lockfree::spsc_queue<PacketBuffer, boost::lockfree::capacity<1024>> write_queue_;
-    std::atomic<bool> is_writing_{false};
+    // 🆕 전송 큐 (Boost.Asio Channel)
+    boost::asio::experimental::channel<void(boost::system::error_code, PacketBuffer)> write_channel_;
 };

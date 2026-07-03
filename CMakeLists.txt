@@ -77,6 +77,8 @@ add_executable(MundusVivensGameServer
     Components.h
     SpatialHashGrid.h
     SpatialHashGrid.cpp
+    GridMap.h
+    GridMap.cpp
     Systems.h
     Systems.cpp
     GameLoop.h

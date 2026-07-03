@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <entt/entt.hpp>
+#include "GridMap.h"
 
 // NPC 식별 정보 (NpcIds, NpcNames 대체)
 struct IdentityComp {
@@ -40,6 +41,8 @@ struct LocationComp {
 struct EmotionComp {
     std::string current_emotion;
     std::string base_emotion;
+    uint8_t current_emotion_id = 0;  // 🆕 고속 비교 및 쇠퇴 룩업용
+    uint8_t base_emotion_id = 0;
     int decay_ticks_remaining = 0;
 };
 
@@ -48,10 +51,27 @@ struct ActivityComp {
     std::string current_activity;
 };
 
-// 쿨다운 및 대화 횟수 정보 (GlobalDialogueCooldowns, DailyDialogueCounts 통합)
+// 쿨다운 및 사회적 에너지 정보
 struct CooldownComp {
-    int global_cooldown_until = 0;
-    int daily_dialogue_count = 0;
+    std::unordered_map<uint32_t, int32_t> cooldown_per_target; // 상대별 쿨다운 버퍼 (target_npc_id -> 틱)
+    int32_t last_initiative_tick = 0;                          // 마지막으로 주도를 시도한 틱 (스팸 방지)
+    int32_t social_energy = 100;                               // 현재 사회적 에너지 (외향성에 따라 다름)
+    int32_t max_social_energy = 100;                           // 최대 사회적 에너지 (외향성에 따라 다름)
+    int32_t cognitive_refractory_until = 0;                    // 인지적 불응기 해제 틱 (대화 직후 다른 자극 무시)
+};
+
+
+// 🆕 이동 속도 및 방향 벡터 (렌더링 동기화용)
+struct VelocityComp {
+    float speed = 2.0f;     // m/s
+    float dir_x = 0.0f;
+    float dir_z = 0.0f;
+};
+
+// 🆕 길찾기 결과 경로
+struct PathfindingComp {
+    std::vector<GridVector2> waypoints;   // 남은 경로의 타일 좌표들
+    size_t current_waypoint_index = 0;    // 현재 목표 웨이포인트 인덱스
 };
 
 
@@ -107,5 +127,17 @@ struct PlayerDialogueComp {
 struct EntityIndex {
     std::unordered_map<uint32_t, entt::entity>    by_npc_id;       // NPC ID -> entity
     std::unordered_map<uint32_t, entt::entity>    by_session_index; // 세션 번호 -> entity
+};
+
+// 🆕 동적 에이전트 ID 맵퍼 구조체
+struct AgentIdMapper {
+    std::unordered_map<std::string, uint32_t> string_to_numeric;
+    std::unordered_map<uint32_t, std::string> numeric_to_string;
+};
+
+// 🆕 고속 캐시 프렌들리 감정 레지스트리 구조체
+struct EmotionRegistry {
+    std::unordered_map<std::string, uint8_t> name_to_id;
+    std::vector<int32_t> decay_ticks_table; // 감정 ID -> 지속 틱수 (Flat Array, O(1))
 };
 

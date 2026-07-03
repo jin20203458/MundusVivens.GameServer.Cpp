@@ -18,6 +18,7 @@
 #include "SpatialHashGrid.h"
 #include "Systems.h"
 #include "TcpServer.h"
+#include "GridMap.h"
 #include "ClientSession.h"
 #include "GrpcResultQueue.h"
 
@@ -110,7 +111,7 @@ int main() {
 
     // 4. 동기식 및 비동기식 클라이언트 초기화 (공유 채널 및 컨텍스트 바인딩 주입)
     MundusVivens::MundusVivensClient client(channel);
-    MundusVivens::AsyncGrpcClient async_client(channel, grpc_ctx, io);
+    MundusVivens::AsyncGrpcClient async_client(channel, grpc_ctx);
     std::cout << "[C++ 서버] gRPC 통신 채널 및 리액터가 성공적으로 초기화되었습니다." << std::endl;
 
     // 5. gRPC 전용 백그라운드 리액터 스레드 가동 (폴링 없이 네이티브 블로킹 대기 - Task E)
@@ -137,9 +138,34 @@ int main() {
 
     entt::registry registry;
     SpatialHashGrid spatial_grid;
+    GridMap grid_map;
+    grid_map.LoadMap();
 
     // EntityIndex 등록 (O(1) 역방향 탐색용 싱글톤 리소스 - Task B)
     auto& entity_index = registry.ctx().emplace<EntityIndex>();
+
+    // 🆕 동적 ID 매핑 및 감정 레지스트리 컨텍스트 등록
+    auto& id_mapper = registry.ctx().emplace<AgentIdMapper>();
+    auto& emotion_registry = registry.ctx().emplace<EmotionRegistry>();
+
+    // 기본 감정들과 쇠퇴 규칙들을 레지스트리에 등록
+    std::vector<std::pair<std::string, int32_t>> base_rules = {
+        {"분노", 10}, {"공포", 10}, {"우울", 10}, {"슬픔", 10}, {"의심", 10}, {"경계", 10}, {"냉소", 10}, {"적대", 10},
+        {"기쁨", 6}, {"놀람", 6}, {"불안", 6}, {"기대", 6}, {"연민", 6},
+        {"흥분", 3}, {"유쾌", 3}, {"재미", 3}, {"흥미", 3},
+        {"평온", 0}, {"대기", 0}
+    };
+
+    uint8_t next_emo_id = 0;
+    for (const auto& [keyword, ticks] : base_rules) {
+        emotion_registry.name_to_id[keyword] = next_emo_id;
+        emotion_registry.decay_ticks_table.push_back(ticks);
+        next_emo_id++;
+    }
+
+    // 기본 플레이어 매핑 등록
+    id_mapper.string_to_numeric["player"] = 1;
+    id_mapper.numeric_to_string[1] = "player";
 
     // 부트스트랩 위치 데이터 캐싱 및 Spatial Grid에 미리 Zone 생성
     for (const auto& loc : bootstrap.locations) {
@@ -159,15 +185,40 @@ int main() {
         // 역방향 ID 인덱스 맵 등록
         entity_index.by_npc_id[agent.agent_id] = entity;
 
+        // 🆕 동적 에이전트 ID 매핑 테이블 빌드
+        id_mapper.numeric_to_string[agent.agent_id] = agent.name;
+        id_mapper.string_to_numeric[agent.name] = agent.agent_id;
+        
+        // 영어 식별자 접두사 매핑도 지원 (예: "npc_eva")
+        std::string lower_name = agent.name;
+        std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+        std::string english_id = "npc_" + lower_name;
+        id_mapper.string_to_numeric[english_id] = agent.agent_id;
+        id_mapper.string_to_numeric[lower_name] = agent.agent_id;
+
         uint32_t zone_id = spatial_grid.GetOrCreateZoneId(agent.location);
         registry.emplace<LocationComp>(entity, zone_id, agent.location, agent.x, agent.y, agent.z);
         spatial_grid.Insert(entity, zone_id);
 
         registry.emplace<ActivityComp>(entity, agent.activity);
 
-        registry.emplace<EmotionComp>(entity, agent.emotion, agent.emotion, 0);
+        // 🆕 감정 정수 ID 동적 매핑 및 초기화
+        if (emotion_registry.name_to_id.find(agent.emotion) == emotion_registry.name_to_id.end()) {
+            emotion_registry.name_to_id[agent.emotion] = next_emo_id;
+            emotion_registry.decay_ticks_table.push_back(3); // 기본 3틱
+            next_emo_id++;
+        }
 
-        registry.emplace<CooldownComp>(entity, 0, 0);
+        auto& emo = registry.emplace<EmotionComp>(entity);
+        emo.current_emotion = agent.emotion;
+        emo.base_emotion = agent.emotion;
+        emo.current_emotion_id = emotion_registry.name_to_id[agent.emotion];
+        emo.base_emotion_id = emo.current_emotion_id;
+        emo.decay_ticks_remaining = 0;
+
+        auto& cooldown = registry.emplace<CooldownComp>(entity);
+        cooldown.max_social_energy = static_cast<int32_t>(50.0f + agent.extroversion * 100.0f);
+        cooldown.social_energy = cooldown.max_social_energy;
 
         registry.emplace<JobComp>(entity);
         registry.emplace<ToilComp>(entity);
@@ -250,10 +301,12 @@ int main() {
             // 매일 아침(0시/0틱) 감지: 대화 제한 횟수 초기화
             if (is_first_loop || tick % 24 == 0) {
                 is_first_loop = false;
-                std::cout << "☀️ [새로운 하루 시작] NPC들의 일일 대화 제한 횟수 초기화" << std::endl;
+                std::cout << "☀️ [새로운 하루 시작] NPC들의 사회적 에너지 완전 충전 및 상대별 쿨다운 리셋" << std::endl;
                 auto cooldown_view = registry.view<CooldownComp>();
                 cooldown_view.each([](CooldownComp& cooldown) {
-                    cooldown.daily_dialogue_count = 0;
+                    cooldown.social_energy = cooldown.max_social_energy;
+                    cooldown.cognitive_refractory_until = 0;
+                    cooldown.cooldown_per_target.clear();
                 });
             }
 
@@ -290,9 +343,12 @@ int main() {
             // 🚀 Axis 2: Job 상태 머신 구동
             SystemJobDriver(registry, spatial_grid, tick, async_client, grpc_queue);
 
+            // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동
+            SystemPathfinding(registry, grid_map);
+            SystemMovement(registry, spatial_grid, tick);
 
             // 동일 공간 인접 검사 및 새 대화 비동기 트리거
-            SystemSpatialDialogueTrigger(registry, spatial_grid, async_client, tick, gen, dis, grpc_queue);
+            SystemSocialInteraction(registry, spatial_grid, async_client, tick, gen, dis, grpc_queue);
 
             // 네트워크 동기화
             SystemNetworkSync(registry, async_client, grpc_queue);

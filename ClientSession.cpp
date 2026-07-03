@@ -12,16 +12,21 @@
 #include <boost/asio/use_awaitable.hpp>
 
 ClientSession::ClientSession(boost::asio::ip::tcp::socket socket, TcpServer& server, uint32_t index)
-    : socket_(std::move(socket)), server_(server), index_(index), backpressure_timer_(socket_.get_executor()) {
+    : socket_(std::move(socket)), server_(server), index_(index), backpressure_timer_(socket_.get_executor()), write_channel_(socket_.get_executor(), 1024) {
 }
 
 ClientSession::~ClientSession() {
+    // 채널 닫기
+    write_channel_.close();
+
     // 큐에 남아서 전송되지 못한 대형 힙 패킷 메모리 해제 (메모리 누수 방지)
-    PacketBuffer buf;
-    while (write_queue_.pop(buf)) {
-        if (buf.is_heap) {
-            delete[] buf.heap_data;
-        }
+    bool has_data = true;
+    while (has_data) {
+        has_data = write_channel_.try_receive([&](boost::system::error_code ec, PacketBuffer buf) {
+            if (buf.is_heap) {
+                delete[] buf.heap_data;
+            }
+        });
     }
 
     try {
@@ -37,6 +42,9 @@ boost::asio::awaitable<void> ClientSession::Run() {
     try {
         // Nagle 알고리즘 비활성화 (저지연 최적화 - Task F-1)
         socket_.set_option(boost::asio::ip::tcp::no_delay(true));
+
+        // 🆕 쓰기 루프 코루틴을 단 한 번만 기동
+        boost::asio::co_spawn(socket_.get_executor(), WriteLoop(), boost::asio::detached);
 
         while (true) {
             // 백프레셔 흐름 제어 활성화 시 코루틴 일시 정지 (Task F-2)
@@ -86,6 +94,9 @@ boost::asio::awaitable<void> ClientSession::Run() {
                   << ", 원인: " << e.what() << ")" << std::endl;
     }
 
+    // 채널을 닫아 WriteLoop도 함께 종료되도록 함
+    write_channel_.close();
+
     // 소켓 정리 및 서버 언레지스터
     try {
         if (socket_.is_open()) {
@@ -117,23 +128,13 @@ void ClientSession::Send(uint16_t packet_id, const uint8_t* payload, size_t size
         std::memcpy(target_ptr + HEADER_SIZE, payload, size);
     }
 
-    // 락프리 SPSC Queue에 삽입 (큐가 가득 차면 패킷을 버려 메인 스레드 블로킹 방지)
-    if (!write_queue_.push(buf)) {
-        std::cerr << "[ClientSession] 송신 큐 포화 - 패킷 폐기 (세션: " << index_ << ")" << std::endl;
+    // 🆕 비동기 채널에 논블로킹 시도 (용량 초과 시 버려짐)
+    if (!write_channel_.try_send(boost::system::error_code{}, buf)) {
+        std::cerr << "[ClientSession] 송신 채널 포화 - 패킷 폐기 (세션: " << index_ << ")" << std::endl;
         if (buf.is_heap) {
             delete[] buf.heap_data; // 힙 할당된 대형 패킷 메모리 직접 수동 해제
         }
         return;
-    }
-
-    // 비동기 쓰기 루프 가동 여부 확인 (CAS로 원자적 전환)
-    bool expected = false;
-    if (is_writing_.compare_exchange_strong(expected, true)) {
-        boost::asio::co_spawn(
-            socket_.get_executor(),
-            WriteLoop(),
-            boost::asio::detached
-        );
     }
 }
 
@@ -141,41 +142,40 @@ boost::asio::awaitable<void> ClientSession::WriteLoop() {
     auto self = shared_from_this();
     try {
         while (true) {
-            PacketBuffer buf;
-            if (!write_queue_.pop(buf)) {
-                is_writing_ = false;
-                if (write_queue_.empty()) {
-                    co_return;
-                }
-                bool expected = false;
-                if (!is_writing_.compare_exchange_strong(expected, true)) {
-                    co_return;
-                }
-                continue;
-            }
+            // 🆕 채널로부터 비동기 수신 대기 (채널이 닫히면 operation_aborted 예외를 던지며 종료됨)
+            PacketBuffer buf = co_await write_channel_.async_receive(boost::asio::use_awaitable);
 
             const uint8_t* data_ptr = buf.is_heap ? buf.heap_data : buf.inline_data;
 
-            co_await boost::asio::async_write(
-                socket_,
-                boost::asio::buffer(data_ptr, buf.size),
-                boost::asio::use_awaitable
-            );
+            try {
+                co_await boost::asio::async_write(
+                    socket_,
+                    boost::asio::buffer(data_ptr, buf.size),
+                    boost::asio::use_awaitable
+                );
+            } catch (...) {
+                if (buf.is_heap) {
+                    delete[] buf.heap_data;
+                }
+                throw;
+            }
 
             if (buf.is_heap) {
                 delete[] buf.heap_data;
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "[ClientSession] 쓰기 루프 예외 발생 (인덱스: " << index_ 
+        std::cerr << "[ClientSession] 쓰기 루프 종료 (세션: " << index_ 
                   << ", 원인: " << e.what() << ")" << std::endl;
         
         // 남은 힙 데이터 누수 방지
-        PacketBuffer leak_buf;
-        while (write_queue_.pop(leak_buf)) {
-            if (leak_buf.is_heap) {
-                delete[] leak_buf.heap_data;
-            }
+        bool has_data = true;
+        while (has_data) {
+            has_data = write_channel_.try_receive([&](boost::system::error_code ec, PacketBuffer leak_buf) {
+                if (leak_buf.is_heap) {
+                    delete[] leak_buf.heap_data;
+                }
+            });
         }
 
         try {

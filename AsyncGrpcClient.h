@@ -26,8 +26,7 @@ public:
 
     // 생성자에서 채널, GrpcContext, io_context를 모두 공유받음
     AsyncGrpcClient(std::shared_ptr<grpc::Channel> channel,
-                    agrpc::GrpcContext& grpc_context,
-                    boost::asio::io_context& io_context);
+                    agrpc::GrpcContext& grpc_context);
     ~AsyncGrpcClient();
 
     void ProcessWorldTickAsync(int32_t tick, TickCallback on_complete);
@@ -59,11 +58,10 @@ private:
     boost::asio::awaitable<void> DoEndPlayerDialogue(uint64_t session_id, EndDialogueCallback on_complete);
     boost::asio::awaitable<void> DoInjectGossip(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete);
     boost::asio::awaitable<void> DoGetPendingJobs(int32_t current_tick, PendingJobsCallback on_complete);
-    boost::asio::awaitable<void> DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete);
+    boost::asio::awaitable<void> DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, std::string detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete);
 
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;
     agrpc::GrpcContext& grpc_ctx_;
-    boost::asio::io_context& io_ctx_;
 };
 
 } // namespace MundusVivens

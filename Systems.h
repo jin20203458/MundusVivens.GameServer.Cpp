@@ -7,6 +7,7 @@
 #include <random>
 #include "AsyncGrpcClient.h"
 #include "SpatialHashGrid.h"
+#include "GridMap.h"
 
 #include <boost/container/small_vector.hpp>
 
@@ -21,8 +22,14 @@ void SystemEmotionDecay(entt::registry& reg);
 
 void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
+void SystemPathfinding(entt::registry& reg, const GridMap& map);
 
-void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
+void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick);
+
+
+float GetLocationSocialModifier(const std::string& location_name);
+
+void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis,
                                   GrpcResultQueue& grpc_queue);

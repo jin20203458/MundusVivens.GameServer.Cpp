@@ -7,11 +7,9 @@
 namespace MundusVivens {
 
 AsyncGrpcClient::AsyncGrpcClient(std::shared_ptr<grpc::Channel> channel,
-                                 agrpc::GrpcContext& grpc_context,
-                                 boost::asio::io_context& io_context)
+                                 agrpc::GrpcContext& grpc_context)
     : stub_(mundusvivens::MundusVivensGrpc::NewStub(channel)),
-      grpc_ctx_(grpc_context),
-      io_ctx_(io_context) {
+      grpc_ctx_(grpc_context) {
 }
 
 AsyncGrpcClient::~AsyncGrpcClient() {
@@ -22,43 +20,43 @@ AsyncGrpcClient::~AsyncGrpcClient() {
 // -------------------------------------------------------------
 
 void AsyncGrpcClient::ProcessWorldTickAsync(int32_t tick, TickCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoProcessWorldTick(tick, std::move(on_complete)),
         boost::asio::detached);
 }
 
 void AsyncGrpcClient::TriggerDialogueAsync(std::vector<uint32_t> participant_ids, DialogueCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoTriggerDialogue(std::move(participant_ids), std::move(on_complete)),
         boost::asio::detached);
 }
 
 void AsyncGrpcClient::BatchUpdateStatusAsync(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoBatchUpdateStatus(std::move(updates), std::move(on_complete)),
         boost::asio::detached);
 }
 
 void AsyncGrpcClient::StartPlayerDialogueAsync(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoStartPlayerDialogue(std::move(player_id), npc_id, std::move(on_complete)),
         boost::asio::detached);
 }
 
 void AsyncGrpcClient::SendPlayerMessageAsync(uint64_t session_id, std::string message, SendPlayerMessageCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoSendPlayerMessage(session_id, std::move(message), std::move(on_complete)),
         boost::asio::detached);
 }
 
 void AsyncGrpcClient::EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoEndPlayerDialogue(session_id, std::move(on_complete)),
         boost::asio::detached);
 }
 
 void AsyncGrpcClient::InjectGossipAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoInjectGossip(target_agent_id, subject_id, std::move(content), std::move(on_complete)),
         boost::asio::detached);
 }
@@ -311,7 +309,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoInjectGossip(uint32_t target_age
 }
 
 void AsyncGrpcClient::GetPendingJobsAsync(int32_t current_tick, PendingJobsCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoGetPendingJobs(current_tick, std::move(on_complete)),
         boost::asio::detached);
 }
@@ -358,12 +356,12 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoGetPendingJobs(int32_t current_t
 }
 
 void AsyncGrpcClient::ReportJobStatusAsync(uint32_t npc_id, uint64_t job_id, int32_t status_val, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete) {
-    boost::asio::co_spawn(io_ctx_,
+    boost::asio::co_spawn(grpc_ctx_,
         DoReportJobStatus(npc_id, job_id, status_val, reason_code, detailed_context, current_tick, std::move(on_complete)),
         boost::asio::detached);
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status_val, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status_val, mundusvivens::InterruptReason reason_code, std::string detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncReportJobStatus>;
         grpc::ClientContext context;

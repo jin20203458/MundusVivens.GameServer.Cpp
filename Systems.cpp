@@ -11,7 +11,14 @@
 #include "GrpcResultQueue.h"
 
 // 헬퍼 함수: 에이전트 문자열 ID와 정수 ID 간의 양방향 정적 매핑
-inline uint32_t GetAgentNumericId(const std::string& string_id) {
+inline uint32_t GetAgentNumericId(const entt::registry& reg, const std::string& string_id) {
+    if (reg.ctx().contains<AgentIdMapper>()) {
+        const auto& mapper = reg.ctx().get<AgentIdMapper>();
+        auto it = mapper.string_to_numeric.find(string_id);
+        if (it != mapper.string_to_numeric.end()) {
+            return it->second;
+        }
+    }
     if (string_id == "player") return 1;
     if (string_id == "npc_eva") return 2;
     if (string_id == "npc_kyle") return 3;
@@ -26,7 +33,14 @@ inline uint32_t GetAgentNumericId(const std::string& string_id) {
     return 0;
 }
 
-inline std::string GetAgentStringId(uint32_t numeric_id) {
+inline std::string GetAgentStringId(const entt::registry& reg, uint32_t numeric_id) {
+    if (reg.ctx().contains<AgentIdMapper>()) {
+        const auto& mapper = reg.ctx().get<AgentIdMapper>();
+        auto it = mapper.numeric_to_string.find(numeric_id);
+        if (it != mapper.numeric_to_string.end()) {
+            return it->second;
+        }
+    }
     if (numeric_id == 1) return "player";
     if (numeric_id == 2) return "npc_eva";
     if (numeric_id == 3) return "npc_kyle";
@@ -110,6 +124,7 @@ void SystemEmotionDecay(entt::registry& reg) {
                 std::string base_emo = emo.base_emotion;
                 if (old_emo != base_emo) {
                     emo.current_emotion = base_emo;
+                    emo.current_emotion_id = emo.base_emotion_id; // 🆕 정수 ID 동기화
                     std::cout << "🎭 [감정 쇠퇴] " << identity.display_name << "의 감정이 오래되어 기본 감정 [" 
                               << base_emo << "](으)로 자동 복귀되었습니다. (이전 감정: " << old_emo << ")" << std::endl;
                 }
@@ -135,6 +150,16 @@ void SystemEmotionDecay(entt::registry& reg) {
                         if (source_emo.find("적대") != std::string::npos) target_emo = "경계";
 
                         emo.current_emotion = target_emo;
+
+                        // 🆕 감정 전염 시 정수 ID 도 동적 매핑
+                        if (reg.ctx().contains<EmotionRegistry>()) {
+                            const auto& registry = reg.ctx().get<EmotionRegistry>();
+                            auto it_emo = registry.name_to_id.find(target_emo);
+                            if (it_emo != registry.name_to_id.end()) {
+                                emo.current_emotion_id = it_emo->second;
+                            }
+                        }
+
                         emo.decay_ticks_remaining = 5; // 5틱 동안 지속 후 자동 쇠퇴
                         std::cout << "⚡ [감정 전염] " << identity.display_name << "이(가) 같은 구역 내 부정적 감정 [" 
                                   << source_emo << "]의 영향을 받아 [" << target_emo << "] 상태가 되었습니다!" << std::endl;
@@ -226,26 +251,12 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                 break;
             }
             case ToilState::Moving: {
-                // Axis 2에서는 즉시 텔레포트 이동 처리
-                std::string old_loc = loc.location_name;
-                uint32_t old_zone = loc.zone_id;
-                uint32_t new_zone = grid.GetOrCreateZoneId(job.target_location);
-
-                loc.location_name = job.target_location;
-                loc.zone_id = new_zone;
-                loc.x = job.target_x;
-                loc.y = job.target_y;
-                loc.z = job.target_z;
-
-                if (new_zone != old_zone) {
-                    grid.Move(entity, old_zone, new_zone);
-                    std::cout << "🏃 [Job 이동 완료] " << identity.display_name << " 이동: [" << old_loc << "] ➔ [" 
-                              << job.target_location << "] (행동: " << job.intent << ")" << std::endl;
+                // 실시간 A* 이동(Axis 3)에서 처리를 전담하므로, 이미 목적지에 도달한 경우에만 Working으로 전환
+                if (loc.location_name == job.target_location) {
+                    toil.state = ToilState::Working;
+                    toil.duration_ticks = 3;
+                    act.current_activity = job.intent;
                 }
-
-                toil.state = ToilState::Working;
-                toil.duration_ticks = 3; // 기본 3틱 유지
-                act.current_activity = job.intent;
                 break;
             }
             case ToilState::Working: {
@@ -280,259 +291,331 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
 
 
 
-// 4. 공간 그리드 기반 동일 구역 내 NPC 간 대화 트리거 시스템
-void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
-                                  MundusVivens::AsyncGrpcClient& client, int tick,
-                                  std::mt19937& gen, std::uniform_real_distribution<>& dis,
-                                  GrpcResultQueue& grpc_queue) {
-    // 공간 해시 그리드의 각 zone을 순회
+// 장소별 사회적 맥락 가중치 반환 헬퍼
+// 장소별 사회적 맥락 가중치 반환 헬퍼
+float GetLocationSocialModifier(const std::string& location_name) {
+    if (location_name.find("Tavern") != std::string::npos || location_name.find("술집") != std::string::npos) {
+        return 1.8f;
+    } else if (location_name.find("Market") != std::string::npos || location_name.find("시장") != std::string::npos) {
+        return 1.5f;
+    } else if (location_name.find("Square") != std::string::npos || location_name.find("광장") != std::string::npos) {
+        return 1.2f;
+    } else if (location_name.find("Church") != std::string::npos || location_name.find("성당") != std::string::npos) {
+        return 0.3f;
+    }
+    return 1.0f;
+}
+
+// 4. 공간 그리드 기반 P2P 소셜 인터랙션 시스템 (주도자-응답자 모델)
+void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
+                             MundusVivens::AsyncGrpcClient& client, int tick,
+                             std::mt19937& gen, std::uniform_real_distribution<>& dis,
+                             GrpcResultQueue& grpc_queue) {
+    
+    // 매 틱마다 모든 NPC의 사회적 에너지를 미세하게 회복
+    auto recovery_view = reg.view<CooldownComp, LocationComp>();
+    recovery_view.each([tick](CooldownComp& cooldown, LocationComp& loc) {
+        // Tavern/술집에 있으면 매 틱 1 회복. 일반 장소에서는 10틱에 1 회복
+        bool in_tavern = (loc.location_name.find("Tavern") != std::string::npos || loc.location_name.find("술집") != std::string::npos);
+        if (in_tavern) {
+            if (cooldown.social_energy < cooldown.max_social_energy) {
+                cooldown.social_energy = std::min(cooldown.max_social_energy, cooldown.social_energy + 1);
+            }
+        } else {
+            if (tick % 10 == 0 && cooldown.social_energy < cooldown.max_social_energy) {
+                cooldown.social_energy = std::min(cooldown.max_social_energy, cooldown.social_energy + 1);
+            }
+        }
+    });
+
+    constexpr float BASE_INITIATION_PROB = 0.15f; // 기본 주도 확률 (15%)
+    constexpr float MAX_DIALOGUE_DISTANCE = 20.0f; // 최대 대화 가능 거리
+
     for (const auto& [zone_id, entities] : grid.AllZones()) {
         if (entities.size() < 2) continue; // 혼자 있는 구역은 건너뜀
 
-        // 구역 내 NPC 순서를 무작위로 섞어서 앞 순서 독식 편향 제거
-        std::vector<entt::entity> shuffled_entities = entities;
-        std::shuffle(shuffled_entities.begin(), shuffled_entities.end(), gen);
-
         // 대화 가능한 후보자 필터링
         std::vector<entt::entity> candidates;
-        for (auto ent : shuffled_entities) {
+        for (auto ent : entities) {
             if (!reg.valid(ent)) continue;
             if (reg.all_of<PlayerTag>(ent)) continue;
             if (reg.all_of<BusyTag>(ent)) continue;
 
             const auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
-            if (tick < cooldown.global_cooldown_until) continue;
-            if (cooldown.daily_dialogue_count >= 3) continue; // 일일 대화 제한
+            if (cooldown.social_energy < 20) continue; // 사회적 에너지 고갈 상태면 대화 제외 (최소 20 필요)
+            if (tick <= cooldown.cognitive_refractory_until) continue; // 인지적 불응기 상태면 대화 제외
 
             const auto& act = reg.get<ActivityComp>(ent);
             double roll = dis(gen);
-            if (IsNPCFocusedOnActivity(act.current_activity, roll)) {
-                continue;
-            }
+            if (IsNPCFocusedOnActivity(act.current_activity, roll)) continue;
+            
             candidates.push_back(ent);
         }
 
         if (candidates.size() < 2) continue;
 
-        for (size_t i = 0; i < candidates.size(); ++i) {
-            entt::entity ent_a = candidates[i];
-            if (!reg.valid(ent_a) || reg.all_of<BusyTag>(ent_a)) continue;
+        // 구역 내 NPC 순서를 무작위로 섞음
+        std::shuffle(candidates.begin(), candidates.end(), gen);
 
-            const auto& identity_a = reg.get<IdentityComp>(ent_a);
-            uint32_t id_a = identity_a.npc_id;
-            std::string name_a = identity_a.display_name;
+        // 구역의 대표 장소 가중치 계산 (첫 번째 유효 엔티티의 위치 사용)
+        std::string zone_loc_name = reg.get<LocationComp>(candidates[0]).location_name;
+        float location_modifier = GetLocationSocialModifier(zone_loc_name);
 
-            for (size_t j = i + 1; j < candidates.size(); ++j) {
-                entt::entity ent_b = candidates[j];
-                if (!reg.valid(ent_b) || reg.all_of<BusyTag>(ent_b)) continue;
+        bool dialogue_triggered_in_zone = false;
 
-                const auto& identity_b = reg.get<IdentityComp>(ent_b);
-                uint32_t id_b = identity_b.npc_id;
-                std::string name_b = identity_b.display_name;
+        // 주도자(Initiator) 개별 판정
+        for (entt::entity initiator : candidates) {
+            if (reg.all_of<BusyTag>(initiator)) continue; // 이미 엮였을 수 있음
 
-                // 🆕 성격(외향성) 및 관계도 캐시 확인
-                float ext_a = reg.all_of<PersonalityComp>(ent_a) ? reg.get<PersonalityComp>(ent_a).extroversion : 0.5f;
-                float ext_b = reg.all_of<PersonalityComp>(ent_b) ? reg.get<PersonalityComp>(ent_b).extroversion : 0.5f;
+            auto& init_cooldown = reg.get_or_emplace<CooldownComp>(initiator);
+            if (tick <= init_cooldown.last_initiative_tick) continue; // 스팸 방지 (이번 틱에는 한 번만 시도)
 
-                int liking_a_to_b = 0;
-                int trust_a_to_b = 50;
-                if (reg.all_of<RelationshipCacheComp>(ent_a)) {
-                    const auto& rels = reg.get<RelationshipCacheComp>(ent_a).relationships;
-                    auto it_rel = rels.find(id_b);
-                    if (it_rel != rels.end()) {
-                        liking_a_to_b = it_rel->second.liking;
-                        trust_a_to_b = it_rel->second.trust;
-                    }
+            float ext_i = reg.all_of<PersonalityComp>(initiator) ? reg.get<PersonalityComp>(initiator).extroversion : 0.5f;
+
+            // 주도 확률 계산 (개인 속성만으로 결정)
+            float initiation_prob = BASE_INITIATION_PROB * (0.3f + ext_i) * location_modifier;
+            if (initiation_prob < 0.02f) initiation_prob = 0.02f;
+            if (initiation_prob > 0.60f) initiation_prob = 0.60f;
+
+            if (dis(gen) >= initiation_prob) continue; // 주도 실패
+
+            init_cooldown.last_initiative_tick = tick; // 시도 기록
+
+            // 타깃 선택 (가중 랜덤)
+            const auto& loc_i = reg.get<LocationComp>(initiator);
+            uint32_t id_i = reg.get<IdentityComp>(initiator).npc_id;
+
+            std::vector<std::pair<entt::entity, float>> potential_targets;
+            float total_weight = 0.0f;
+
+            for (entt::entity target_candidate : candidates) {
+                if (target_candidate == initiator) continue;
+                if (reg.all_of<BusyTag>(target_candidate)) continue;
+
+                uint32_t id_c = reg.get<IdentityComp>(target_candidate).npc_id;
+
+                // 상대별 쿨다운 체크
+                auto it_cooldown = init_cooldown.cooldown_per_target.find(id_c);
+                if (it_cooldown != init_cooldown.cooldown_per_target.end() && tick < it_cooldown->second) {
+                    continue; // 이 상대와는 아직 쿨다운 중
                 }
 
-                int liking_b_to_a = 0;
-                int trust_b_to_a = 50;
-                if (reg.all_of<RelationshipCacheComp>(ent_b)) {
-                    const auto& rels = reg.get<RelationshipCacheComp>(ent_b).relationships;
-                    auto it_rel = rels.find(id_a);
-                    if (it_rel != rels.end()) {
-                        liking_b_to_a = it_rel->second.liking;
-                        trust_b_to_a = it_rel->second.trust;
-                    }
+                // 거리 필터 (좌표 기반)
+                const auto& loc_c = reg.get<LocationComp>(target_candidate);
+                float dx = loc_i.x - loc_c.x;
+                float dz = loc_i.z - loc_c.z;
+                float dist = std::sqrt(dx*dx + dz*dz);
+                if (dist > MAX_DIALOGUE_DISTANCE) continue;
+
+                // 호감도 조회
+                int liking_i_to_c = 0;
+                if (reg.all_of<RelationshipCacheComp>(initiator)) {
+                    const auto& rels = reg.get<RelationshipCacheComp>(initiator).relationships;
+                    auto it_rel = rels.find(id_c);
+                    if (it_rel != rels.end()) liking_i_to_c = it_rel->second.liking;
+                }
+                
+                int liking_c_to_i = 0;
+                if (reg.all_of<RelationshipCacheComp>(target_candidate)) {
+                    const auto& rels = reg.get<RelationshipCacheComp>(target_candidate).relationships;
+                    auto it_rel = rels.find(id_i);
+                    if (it_rel != rels.end()) liking_c_to_i = it_rel->second.liking;
                 }
 
-                // 🆕 대화 거부 (A-3) - 친밀도가 너무 나쁘면 대화를 즉시 거부
-                if (liking_a_to_b < -70 || liking_b_to_a < -70) {
-                    std::cout << "💔 [대화 거부] " << name_a << "와(과) " << name_b 
-                              << "은(는) 서로 사이가 좋지 않아 대화를 거부했습니다. (Liking: " 
-                              << liking_a_to_b << " / " << liking_b_to_a << ")" << std::endl;
-                    // 즉각 쿨다운 적용
-                    reg.get_or_emplace<CooldownComp>(ent_a).global_cooldown_until = tick + 10;
-                    reg.get_or_emplace<CooldownComp>(ent_b).global_cooldown_until = tick + 10;
-                    continue;
+                // 대화 거부 (원수 관계)
+                if (liking_i_to_c < -70 || liking_c_to_i < -70) continue;
+
+                // 호감도 기반 가중치 계산
+                float weight = std::max(1.0f, (float)(liking_i_to_c + 60));
+                potential_targets.push_back({target_candidate, weight});
+                total_weight += weight;
+            }
+
+            if (potential_targets.empty()) continue; // 타깃 없음
+
+            // 가중 랜덤으로 타깃 하나 선택
+            float rand_weight = dis(gen) * total_weight;
+            entt::entity target = entt::null;
+            for (const auto& pt : potential_targets) {
+                rand_weight -= pt.second;
+                if (rand_weight <= 0.0f) {
+                    target = pt.first;
+                    break;
                 }
+            }
+            if (target == entt::null) target = potential_targets.back().first; // 안전 장치
 
-                // 🆕 곱셈 기반 2단계 대화 및 합류 공식 도입
-                // 1단계: 1:1 대화 확률 판정
-                float personality_factor = 0.5f + (ext_a + ext_b) / 2.0f; // 0.5 ~ 1.5
-                float affinity_factor = (liking_a_to_b + liking_b_to_a) / 2.0f; // -100 ~ +100
-                float trust_factor = (trust_a_to_b + trust_b_to_a) / 2.0f; // 0 ~ 100
-                
-                float relationship_factor = 1.0f 
-                                            + (affinity_factor / 100.0f) 
-                                            + ((trust_factor - 50.0f) / 100.0f); // 0.0 ~ 3.0 (중립 1.0)
-                
-                constexpr float BASE_DIALOGUE_PROB = 0.08f; // 5초 틱 기준 8%
-                float probability = BASE_DIALOGUE_PROB * personality_factor * relationship_factor;
-                
-                // [0.01, 0.50] 범위 클램프
-                if (probability < 0.01f) probability = 0.01f;
-                if (probability > 0.50f) probability = 0.50f;
+            // 타깃 수락 판정
+            uint32_t id_t = reg.get<IdentityComp>(target).npc_id;
+            float ext_t = reg.all_of<PersonalityComp>(target) ? reg.get<PersonalityComp>(target).extroversion : 0.5f;
+            
+            int liking_t_to_i = 0;
+            if (reg.all_of<RelationshipCacheComp>(target)) {
+                const auto& rels = reg.get<RelationshipCacheComp>(target).relationships;
+                auto it_rel = rels.find(id_i);
+                if (it_rel != rels.end()) liking_t_to_i = it_rel->second.liking;
+            }
 
-                if (dis(gen) < probability) {
-                    // 대화 대상 성립! 다자간 대화 확장 여부 검사 (최대 4인)
-                    boost::container::small_vector<entt::entity, 10> group_participants = { ent_a, ent_b };
-                    std::vector<uint32_t> group_ids = { id_a, id_b };
+            float accept_prob = 0.5f + (ext_t * 0.25f) + (liking_t_to_i / 200.0f) + ((location_modifier - 1.0f) * 0.15f);
+            if (accept_prob < 0.10f) accept_prob = 0.10f;
+            if (accept_prob > 0.95f) accept_prob = 0.95f;
 
-                    // 2단계: 그룹 합류 판정 (별도 확률 + 크기 감쇠)
-                    constexpr float BASE_JOIN_PROB = 0.25f; // 25% 기본 합류율
+            if (dis(gen) >= accept_prob) {
+                // 수락 거절
+                std::cout << "💔 [대화 수락 거절] " << reg.get<IdentityComp>(target).display_name 
+                          << "이(가) " << reg.get<IdentityComp>(initiator).display_name << "의 대화 요청을 거절했습니다." << std::endl;
+                // 짧은 쿨다운 (다음에 또 거절당하는 빈도를 줄임)
+                init_cooldown.cooldown_per_target[id_t] = tick + 3;
+                continue;
+            }
 
-                    for (size_t k = 0; k < candidates.size(); ++k) {
-                        entt::entity ent_c = candidates[k];
-                        if (ent_c == ent_a || ent_c == ent_b) continue;
-                        if (group_participants.size() >= 4) break;
-                        if (reg.all_of<BusyTag>(ent_c)) continue;
+            // 대화 성립! 다자간 합류 판정
+            boost::container::small_vector<entt::entity, 10> group_participants = { initiator, target };
+            std::vector<uint32_t> group_ids = { id_i, id_t };
 
-                        uint32_t id_c = reg.get<IdentityComp>(ent_c).npc_id;
+            constexpr float BASE_JOIN_PROB = 0.25f;
 
-                        // C와 기존 참가자들 간의 평균 호감도 및 신뢰도 계산
-                        int sum_liking = 0;
-                        int sum_trust = 0;
-                        int member_count = 0;
-                        for (auto member : group_participants) {
-                            uint32_t member_id = reg.get<IdentityComp>(member).npc_id;
-                            if (reg.all_of<RelationshipCacheComp>(ent_c)) {
-                                const auto& rels = reg.get<RelationshipCacheComp>(ent_c).relationships;
-                                auto it_rel = rels.find(member_id);
-                                if (it_rel != rels.end()) {
-                                    sum_liking += it_rel->second.liking;
-                                    sum_trust += it_rel->second.trust;
-                                    member_count++;
-                                }
-                            }
+            for (entt::entity other : candidates) {
+                if (other == initiator || other == target) continue;
+                if (group_participants.size() >= 4) break;
+                if (reg.all_of<BusyTag>(other)) continue;
+
+                uint32_t id_o = reg.get<IdentityComp>(other).npc_id;
+
+                int sum_liking = 0;
+                int sum_trust = 0;
+                int member_count = 0;
+                for (auto member : group_participants) {
+                    uint32_t member_id = reg.get<IdentityComp>(member).npc_id;
+                    if (reg.all_of<RelationshipCacheComp>(other)) {
+                        const auto& rels = reg.get<RelationshipCacheComp>(other).relationships;
+                        auto it_rel = rels.find(member_id);
+                        if (it_rel != rels.end()) {
+                            sum_liking += it_rel->second.liking;
+                            sum_trust += it_rel->second.trust;
+                            member_count++;
                         }
+                    }
+                }
 
-                        float avg_liking = member_count > 0 ? (float)sum_liking / member_count : 0.0f;
-                        float avg_trust = member_count > 0 ? (float)sum_trust / member_count : 50.0f;
+                float avg_liking = member_count > 0 ? (float)sum_liking / member_count : 0.0f;
+                float avg_trust = member_count > 0 ? (float)sum_trust / member_count : 50.0f;
 
-                        // 호감 문턱 설정: 평균 호감도가 20 이상이어야 합류 고려
-                        if (avg_liking < 20.0f) continue;
+                if (avg_liking < 20.0f) continue;
 
-                        // C의 외향성 및 관계 계수 계산
-                        float ext_c = reg.all_of<PersonalityComp>(ent_c) ? reg.get<PersonalityComp>(ent_c).extroversion : 0.5f;
-                        float join_personality = 0.5f + ext_c; // 0.5 ~ 1.5
-                        float join_relationship = 1.0f 
-                                                  + (avg_liking / 100.0f) 
-                                                  + ((avg_trust - 50.0f) / 100.0f); // 0.0 ~ 3.0
+                float ext_o = reg.all_of<PersonalityComp>(other) ? reg.get<PersonalityComp>(other).extroversion : 0.5f;
+                float join_personality = 0.5f + ext_o;
+                float join_relationship = 1.0f + (avg_liking / 100.0f) + ((avg_trust - 50.0f) / 100.0f);
+                float group_penalty = 2.0f / (float)group_participants.size();
 
-                        // 그룹 크기 감쇠 적용 (2인 -> 1.0, 3인 -> 0.67)
-                        float group_penalty = 2.0f / (float)group_participants.size();
+                float join_prob = BASE_JOIN_PROB * join_personality * join_relationship * group_penalty;
+                if (join_prob < 0.0f) join_prob = 0.0f;
+                if (join_prob > 0.50f) join_prob = 0.50f;
 
-                        float join_prob = BASE_JOIN_PROB * join_personality * join_relationship * group_penalty;
+                if (dis(gen) < join_prob) {
+                    group_participants.push_back(other);
+                    group_ids.push_back(id_o);
+                }
+            }
+
+            std::string participant_names_str = "";
+            for (auto ent : group_participants) {
+                participant_names_str += reg.get<IdentityComp>(ent).display_name + " ";
+            }
+
+            if (group_participants.size() > 2) {
+                std::cout << "\n👥 [다자간 그룹 대화 성립] (" << participant_names_str 
+                          << ")이(가) [" << zone_loc_name << "]에서 그룹 대화를 시작합니다!" << std::endl;
+            } else {
+                std::cout << "\n💬 [1:1 대화 성립] " << reg.get<IdentityComp>(initiator).display_name << " ➔ " 
+                          << reg.get<IdentityComp>(target).display_name 
+                          << " [" << zone_loc_name << "]에서 대화를 주도했습니다." << std::endl;
+            }
+            std::cout << "💬 비동기 gRPC 통신으로 대화 트리거를 요청합니다..." << std::endl;
+
+            // 중복 대화 요청 방지를 위해 즉시 임시 Busy 상태 적용
+            for (auto ent : group_participants) {
+                reg.get<ActivityComp>(ent).current_activity = "대화 요청 중";
+                reg.emplace_or_replace<BusyTag>(ent);
+            }
+            // [비동기 gRPC 호출]
+            client.TriggerDialogueAsync(std::move(group_ids), 
+                [&grpc_queue, group_participants, tick, zone_loc_name, &grid](bool success, const MundusVivens::DialogueResult& result) {
+                    grpc_queue.Push([success, result, group_participants, tick, zone_loc_name, &grid](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
                         
-                        // [0.00, 0.50] 범위 클램프
-                        if (join_prob < 0.0f) join_prob = 0.0f;
-                        if (join_prob > 0.50f) join_prob = 0.50f;
-
-                        if (dis(gen) < join_prob) {
-                            group_participants.push_back(ent_c);
-                            group_ids.push_back(id_c);
+                        bool all_valid = true;
+                        for (auto ent : group_participants) {
+                            if (!reg.valid(ent)) {
+                                all_valid = false;
+                                break;
+                            }
                         }
-                    }
 
-                    const auto& loc_a = reg.get<LocationComp>(ent_a);
-                    std::string loc_name = loc_a.location_name;
-
-                    std::string participant_names_str = "";
-                    for (auto ent : group_participants) {
-                        participant_names_str += reg.get<IdentityComp>(ent).display_name + " ";
-                    }
-
-                    if (group_participants.size() > 2) {
-                        std::cout << "\n👥 [다자간 C++ 공간 대화 트리거] (" << participant_names_str 
-                                  << ")이(가) [" << loc_name << "]에서 그룹 대화를 시작합니다! (확률: " 
-                                  << probability << ")" << std::endl;
-                    } else {
-                        std::cout << "\n💬 [C++ 공간 충돌 감지] " << name_a << "와(과) " << name_b 
-                                  << "이(가) [" << loc_name << "] 공간에서 마주쳤습니다! (확률: " 
-                                  << probability << ")" << std::endl;
-                    }
-                    std::cout << "💬 비동기 gRPC 통신으로 대화 트리거를 요청합니다 (완전 비동기)..." << std::endl;
-
-                    // 중복 대화 요청 방지를 위해 즉시 임시 Busy 상태 적용
-                    for (auto ent : group_participants) {
-                        reg.get<ActivityComp>(ent).current_activity = "대화 요청 중";
-                        reg.emplace_or_replace<BusyTag>(ent);
-                    }
-
-                    // 비동기 트리거 호출 (반응형 단일 RPC 구조)
-                    client.TriggerDialogueAsync(std::move(group_ids), [&grpc_queue, group_participants, tick, loc_name, participant_names_str, &grid](bool success, const MundusVivens::DialogueResult& result) {
-                        grpc_queue.Push([success, result, group_participants, tick, loc_name, participant_names_str, &grid](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
-
-                            bool all_valid = true;
+                        if (success && !result.has_error && all_valid) {
+                            std::string participant_names = "";
                             for (auto ent : group_participants) {
-                                if (!reg.valid(ent)) {
-                                    all_valid = false;
-                                    break;
-                                }
+                                participant_names += reg.get<IdentityComp>(ent).display_name + " ";
                             }
 
-                            if (success && all_valid) {
-                                std::string participant_names = "";
-                                for (auto ent : group_participants) {
-                                    participant_names += reg.get<IdentityComp>(ent).display_name + " ";
+                            std::cout << "\n🔔 [비동기 대화 완료 수신] [" << zone_loc_name << "]에서 진행된 ("
+                                      << participant_names << ")의 대화 완료!" << std::endl;
+
+                            if (result.dialogue_lines.empty()) {
+                                std::cerr << "❌ [대화 데이터 에러] 대화 수거에 성공했으나 대사 텍스트가 비어있습니다. 에러 요약: " 
+                                          << result.dialogue_summary << std::endl;
+                            } else {
+                                std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
+                                std::cout << result.dialogue_summary << std::endl;
+                                std::cout << "==============================================================" << std::endl;
+
+                                std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
+                                for (const auto& line : result.dialogue_lines) {
+                                    std::cout << line << std::endl;
                                 }
+                                std::cout << "==============================================================\n" << std::endl;
+                            }
 
-                                std::cout << "\n🔔 [비동기 대화 완료 수신] [" << loc_name << "]에서 진행된 ("
-                                          << participant_names << ")의 대화 완료!" << std::endl;
-
-                                if (result.dialogue_lines.empty()) {
-                                    std::cerr << "❌ [대화 데이터 에러] 대화 수거에 성공했으나 대사 텍스트가 비어있습니다. 에러 요약: " 
-                                              << result.dialogue_summary << std::endl;
-                                } else {
-                                    std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
-                                    std::cout << result.dialogue_summary << std::endl;
-                                    std::cout << "==============================================================" << std::endl;
-
-                                    std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
-                                    for (const auto& line : result.dialogue_lines) {
-                                        std::cout << line << std::endl;
+                            // C++ 내부 감정 상태 갱신
+                            if (reg.ctx().contains<EntityIndex>()) {
+                                const auto& entity_index = reg.ctx().get<EntityIndex>();
+                                for (const auto& em_update : result.emotion_updates) {
+                                    entt::entity target_ent = entt::null;
+                                    auto idx_it = entity_index.by_npc_id.find(em_update.agent_id);
+                                    if (idx_it != entity_index.by_npc_id.end()) {
+                                        target_ent = idx_it->second;
                                     }
-                                    std::cout << "==============================================================\n" << std::endl;
-                                }
 
-                                // C++ 내부 감정 상태 갱신
-                                if (reg.ctx().contains<EntityIndex>()) {
-                                    const auto& entity_index = reg.ctx().get<EntityIndex>();
-                                    for (const auto& em_update : result.emotion_updates) {
-                                        entt::entity target_ent = entt::null;
-                                        auto idx_it = entity_index.by_npc_id.find(em_update.agent_id);
-                                        if (idx_it != entity_index.by_npc_id.end()) {
-                                            target_ent = idx_it->second;
-                                        }
+                                    if (reg.valid(target_ent) && reg.all_of<EmotionComp>(target_ent)) {
+                                        auto& emo = reg.get<EmotionComp>(target_ent);
+                                        const auto& identity = reg.get<IdentityComp>(target_ent);
+                                        emo.current_emotion = em_update.new_emotion;
+                                        std::cout << "🎭 [감정 동기화] " << identity.display_name << "의 감정이 [" << em_update.new_emotion 
+                                                   << "](으)로 업데이트되었습니다." << std::endl;
 
-                                        if (reg.valid(target_ent) && reg.all_of<EmotionComp>(target_ent)) {
-                                            auto& emo = reg.get<EmotionComp>(target_ent);
-                                            const auto& identity = reg.get<IdentityComp>(target_ent);
-                                            emo.current_emotion = em_update.new_emotion;
-                                            std::cout << "🎭 [감정 동기화] " << identity.display_name << "의 감정이 [" << em_update.new_emotion 
-                                                      << "](으)로 업데이트되었습니다." << std::endl;
-
-                                            int decay_ticks = 3;
+                                        int decay_ticks = 3;
+                                        if (reg.ctx().contains<EmotionRegistry>()) {
+                                            auto& emo_reg = reg.ctx().get<EmotionRegistry>();
+                                            auto it_emo = emo_reg.name_to_id.find(em_update.new_emotion);
+                                            if (it_emo == emo_reg.name_to_id.end()) {
+                                                uint8_t next_id = static_cast<uint8_t>(emo_reg.decay_ticks_table.size());
+                                                emo_reg.name_to_id[em_update.new_emotion] = next_id;
+                                                emo_reg.decay_ticks_table.push_back(3);
+                                                emo.current_emotion_id = next_id;
+                                                decay_ticks = 3;
+                                            } else {
+                                                emo.current_emotion_id = it_emo->second;
+                                                decay_ticks = emo_reg.decay_ticks_table[emo.current_emotion_id];
+                                            }
+                                        } else {
                                             std::string new_emo = em_update.new_emotion;
                                             if (new_emo.find("분노") != std::string::npos || 
+                                                new_emo.find("적대") != std::string::npos || 
                                                 new_emo.find("공포") != std::string::npos || 
                                                 new_emo.find("우울") != std::string::npos || 
                                                 new_emo.find("슬픔") != std::string::npos || 
                                                 new_emo.find("의심") != std::string::npos || 
                                                 new_emo.find("경계") != std::string::npos ||
-                                                new_emo.find("냉소") != std::string::npos ||
-                                                new_emo.find("적대") != std::string::npos) {
+                                                new_emo.find("냉소") != std::string::npos) {
                                                 decay_ticks = 10;
                                             } else if (new_emo.find("기쁨") != std::string::npos || 
                                                        new_emo.find("놀람") != std::string::npos || 
@@ -540,114 +623,114 @@ void SystemSpatialDialogueTrigger(entt::registry& reg, SpatialHashGrid& grid,
                                                        new_emo.find("기대") != std::string::npos ||
                                                        new_emo.find("연민") != std::string::npos) {
                                                 decay_ticks = 6;
-                                            } else if (new_emo.find("흥분") != std::string::npos ||
-                                                       new_emo.find("유쾌") != std::string::npos ||
-                                                       new_emo.find("재미") != std::string::npos ||
-                                                       new_emo.find("흥미") != std::string::npos) {
+                                            } else {
                                                 decay_ticks = 3;
                                             }
-                                            emo.decay_ticks_remaining = decay_ticks;
                                         }
+                                        emo.decay_ticks_remaining = decay_ticks;
                                     }
                                 }
 
-                                 // C++ 내부 다음 행동 계획(next_jobs) 반영
-                                 if (reg.ctx().contains<EntityIndex>()) {
-                                     const auto& entity_index = reg.ctx().get<EntityIndex>();
-                                     for (const auto& nj : result.next_jobs) {
-                                         entt::entity target_ent = entt::null;
-                                         auto idx_it = entity_index.by_npc_id.find(nj.npc_id);
-                                         if (idx_it != entity_index.by_npc_id.end()) {
-                                             target_ent = idx_it->second;
-                                         }
-
-                                         if (reg.valid(target_ent)) {
-                                             auto& job = reg.get_or_emplace<JobComp>(target_ent);
-                                             job.job_id = nj.job_id;
-                                             job.target_location = nj.target_location;
-                                             job.target_x = nj.target_x;
-                                             job.target_y = nj.target_y;
-                                             job.target_z = nj.target_z;
-                                             job.intent = nj.intent;
-                                             job.target_agent_id = nj.target_agent_id;
-                                             job.priority = nj.priority;
-                                             job.is_active = true;
-
-                                             auto& toil = reg.get_or_emplace<ToilComp>(target_ent);
-                                             toil.state = ToilState::Idle;
-                                             toil.duration_ticks = 0;
-
-                                             std::cout << "🧠 [C++ 대화 후 동기화 계획 적용] " 
-                                                       << reg.get<IdentityComp>(target_ent).display_name 
-                                                       << " ➔ 위치: " << nj.target_location 
-                                                       << " (" << nj.target_x << ", " << nj.target_y << ", " << nj.target_z << ")"
-                                                       << ", 행동: " << nj.intent << " (Job: " << nj.job_id << ")" << std::endl;
-                                         }
-                                     }
-                                 }
-
-                                // 🆕 엿듣기(Eavesdropping) 동작성 추가
-                                if (!group_participants.empty() && reg.valid(group_participants[0])) {
-                                    uint32_t zone_id = reg.get<LocationComp>(group_participants[0]).zone_id;
-                                    if (zone_id != 0) {
-                                        const auto& bystanders = reg.ctx().contains<SpatialHashGrid>() ? 
-                                            reg.ctx().get<SpatialHashGrid>().GetEntitiesInZone(zone_id) :
-                                            grid.GetEntitiesInZone(zone_id);
-
-                                        std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
-                                        for (auto ent : bystanders) {
-                                            if (part_set.find(ent) == part_set.end()) {
-                                                if (reg.valid(ent) && reg.all_of<IdentityComp>(ent)) {
-                                                    uint32_t bystander_id = reg.get<IdentityComp>(ent).npc_id;
-                                                    std::string bystander_name = reg.get<IdentityComp>(ent).display_name;
-
-                                                    uint32_t subject_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
-
-                                                    std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
-                                                              << loc_name << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
-
-                                                    async_client.InjectGossipAsync(bystander_id, subject_id, result.dialogue_summary, [bystander_name](bool success, const std::string& msg) {
-                                                        if (success) {
-                                                            std::cout << "📢 [소문 주입 성공] " << bystander_name << "의 기억에 소문이 주입되었습니다." << std::endl;
-                                                        } else {
-                                                            std::cerr << "❌ [소문 주입 실패] " << bystander_name << ": " << msg << std::endl;
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        }
+                                // C++ 내부 다음 행동 계획(next_jobs) 반영
+                                for (const auto& nj : result.next_jobs) {
+                                    entt::entity target_ent = entt::null;
+                                    auto idx_it = entity_index.by_npc_id.find(nj.npc_id);
+                                    if (idx_it != entity_index.by_npc_id.end()) {
+                                        target_ent = idx_it->second;
                                     }
-                                }
 
-                                // 행동 상태 갱신 및 쿨다운 설정
-                                for (auto ent : group_participants) {
-                                    if (reg.valid(ent)) {
-                                        reg.get<CooldownComp>(ent).daily_dialogue_count++;
-                                        reg.get<ActivityComp>(ent).current_activity = "대화 마침";
-                                        auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
-                                        cooldown.global_cooldown_until = tick + 3;
-                                        if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
-                                    }
-                                }
-                            } else {
-                                std::cerr << "❌ [대화 요청 실패] 대화 완료 콜백 수신 실패 또는 취소됨." << std::endl;
-                                for (auto ent : group_participants) {
-                                    if (reg.valid(ent)) {
-                                        reg.get<ActivityComp>(ent).current_activity = "대기";
-                                        if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
+                                    if (reg.valid(target_ent)) {
+                                        auto& job = reg.get_or_emplace<JobComp>(target_ent);
+                                        job.job_id = nj.job_id;
+                                        job.target_location = nj.target_location;
+                                        job.target_x = nj.target_x;
+                                        job.target_y = nj.target_y;
+                                        job.target_z = nj.target_z;
+                                        job.intent = nj.intent;
+                                        job.target_agent_id = nj.target_agent_id;
+                                        job.priority = nj.priority;
+                                        job.is_active = true;
+
+                                        auto& toil = reg.get_or_emplace<ToilComp>(target_ent);
+                                        toil.state = ToilState::Idle;
+                                        toil.duration_ticks = 0;
+
+                                        std::cout << "🧠 [C++ 대화 후 동기화 계획 적용] " 
+                                                  << reg.get<IdentityComp>(target_ent).display_name 
+                                                  << " ➔ 위치: " << nj.target_location 
+                                                  << " (" << nj.target_x << ", " << nj.target_y << ", " << nj.target_z << ")"
+                                                  << ", 행동: " << nj.intent << " (Job: " << nj.job_id << ")" << std::endl;
                                     }
                                 }
                             }
-                        });
-                    });
 
-                    break; // 한 틱에 한 명은 한 번만 대화 시작 가능하도록 내부 루프 나감
-                }
-            }
-        }
+                            // 🆕 엿듣기(Eavesdropping) 동작성 추가
+                            if (!group_participants.empty() && reg.valid(group_participants[0])) {
+                                uint32_t zone_id = reg.get<LocationComp>(group_participants[0]).zone_id;
+                                if (zone_id != 0) {
+                                    const auto& bystanders = reg.ctx().contains<SpatialHashGrid>() ? 
+                                        reg.ctx().get<SpatialHashGrid>().GetEntitiesInZone(zone_id) :
+                                        grid.GetEntitiesInZone(zone_id);
+
+                                    std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
+                                    for (auto ent : bystanders) {
+                                        if (part_set.find(ent) == part_set.end()) {
+                                            if (reg.valid(ent) && reg.all_of<IdentityComp>(ent)) {
+                                                uint32_t bystander_id = reg.get<IdentityComp>(ent).npc_id;
+                                                std::string bystander_name = reg.get<IdentityComp>(ent).display_name;
+                                                uint32_t subject_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
+
+                                                std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
+                                                          << zone_loc_name << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
+
+                                                async_client.InjectGossipAsync(bystander_id, subject_id, result.dialogue_summary, [bystander_name](bool success, const std::string& msg) {
+                                                    if (success) {
+                                                        std::cout << "📢 [소문 주입 성공] " << bystander_name << "의 기억에 소문이 주입되었습니다." << std::endl;
+                                                    } else {
+                                                        std::cerr << "❌ [소문 주입 실패] " << bystander_name << ": " << msg << std::endl;
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 행동 상태 갱신 및 상대별 쿨다운/사회적 에너지 소모 설정
+                            for (auto ent : group_participants) {
+                                if (reg.valid(ent)) {
+                                    auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
+                                    cooldown.social_energy = std::max(0, cooldown.social_energy - 30); // 🆕 대화 시 사회적 에너지 30 소모
+                                    cooldown.cognitive_refractory_until = tick + 3;                    // 🆕 인지적 불응기 3틱 설정
+                                    reg.get<ActivityComp>(ent).current_activity = "생각 정리 중";
+                                    
+                                    // 같이 대화한 멤버들에 대해서만 쿨다운 설정 (예: 6틱)
+                                    for (auto other : group_participants) {
+                                        if (other == ent) continue;
+                                        uint32_t other_id = reg.get<IdentityComp>(other).npc_id;
+                                        cooldown.cooldown_per_target[other_id] = tick + 6;
+                                    }
+
+                                    if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
+                                }
+                            }
+                        } else {
+                            std::cerr << "❌ [대화 요청 실패] 대화 완료 콜백 수신 실패 또는 취소됨." << std::endl;
+                            for (auto ent : group_participants) {
+                                if (reg.valid(ent)) {
+                                    reg.get<ActivityComp>(ent).current_activity = "대기";
+                                    if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);
+                                }
+                            }
+                        }
+                    });
+                });
+
+            dialogue_triggered_in_zone = true;
+            break; // 한 zone에서 이번 틱에는 한 쌍만 대화를 트리거하고 넘어감
+        } // end of initiator loop
     }
 }
-
 
 
 // 6. 변경 상태 배치 gRPC 동기화 시스템
@@ -770,7 +853,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
 
             // 플레이어 검색 혹은 신규 생성 (EntityIndex O(1) 활용)
             entt::entity player_ent = entt::null;
-            auto it = index.by_npc_id.find(GetAgentNumericId(req.player_id()));
+            auto it = index.by_npc_id.find(GetAgentNumericId(reg, req.player_id()));
             if (it != index.by_npc_id.end()) {
                 player_ent = it->second;
             }
@@ -778,11 +861,11 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             if (player_ent == entt::null) {
                 player_ent = reg.create();
                 reg.emplace<PlayerTag>(player_ent, cmd.session_index);
-                reg.emplace<IdentityComp>(player_ent, GetAgentNumericId(req.player_id()), req.player_name());
+                reg.emplace<IdentityComp>(player_ent, GetAgentNumericId(reg, req.player_id()), req.player_name());
                 reg.emplace<LocationComp>(player_ent, 0u, "광장");
                 reg.emplace<LastSyncedComp>(player_ent);
 
-                index.by_npc_id[GetAgentNumericId(req.player_id())] = player_ent;
+                index.by_npc_id[GetAgentNumericId(reg, req.player_id())] = player_ent;
                 index.by_session_index[cmd.session_index] = player_ent;
 
                 std::cout << "👤 [플레이어 로그인] 신규 플레이어 등록: " << req.player_name() << " (ID: " << req.player_id() << ")" << std::endl;
@@ -947,7 +1030,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             auto session = tcp.GetSession(session_idx);
             if (session) session->IncrementPendingGrpc();
 
-            async_client.StartPlayerDialogueAsync(GetAgentStringId(player_identity.npc_id), req.npc_id(), 
+            async_client.StartPlayerDialogueAsync(GetAgentStringId(reg, player_identity.npc_id), req.npc_id(), 
                 [&grpc_queue, tcp_addr = &tcp, session_idx, npc_name, npc_ent, player_ent, session](bool success, uint64_t session_id, const std::string& greeting, const std::string& message) {
                     if (session) session->DecrementPendingGrpc();
                     grpc_queue.Push([success, session_id, greeting, message, tcp_addr, session_idx, npc_name, npc_ent, player_ent](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
@@ -1067,7 +1150,7 @@ void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick)
     payload.set_tick(tick);
 
     auto view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>(entt::exclude<PlayerTag>);
-    view.each([&](const IdentityComp& identity, const LocationComp& loc, const EmotionComp& emo, const ActivityComp& act) {
+    view.each([&](entt::entity entity, const IdentityComp& identity, const LocationComp& loc, const EmotionComp& emo, const ActivityComp& act) {
         auto* snapshot = payload.add_npcs();
         snapshot->set_npc_id(identity.npc_id);
         snapshot->set_display_name(identity.display_name);
@@ -1079,7 +1162,151 @@ void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick)
         pos->set_z(loc.z);
         snapshot->set_emotion(emo.current_emotion);
         snapshot->set_activity(act.current_activity);
+
+        if (reg.all_of<VelocityComp>(entity)) {
+            const auto& vel = reg.get<VelocityComp>(entity);
+            auto* vel_vec = snapshot->mutable_velocity();
+            vel_vec->set_x(vel.dir_x * vel.speed);
+            vel_vec->set_y(0.0f);
+            vel_vec->set_z(vel.dir_z * vel.speed);
+        }
     });
 
     BroadcastProto(tcp, PacketId::SC_WORLD_SNAPSHOT, payload);
+}
+
+// 🆕 Axis 3: 경로 탐색 처리 시스템 (A* 호출)
+void SystemPathfinding(entt::registry& reg, const GridMap& map) {
+    auto view = reg.view<JobComp, ToilComp, LocationComp>();
+    view.each([&](entt::entity entity, JobComp& job, ToilComp& toil, LocationComp& loc) {
+        if (toil.state == ToilState::Moving) {
+            if (!reg.all_of<PathfindingComp>(entity)) {
+                reg.emplace<PathfindingComp>(entity);
+            }
+            auto& pathfinding = reg.get<PathfindingComp>(entity);
+
+            // 경로가 비어있는 경우 새로 계산
+            if (pathfinding.waypoints.empty()) {
+                float target_x = job.target_x;
+                float target_z = job.target_z;
+
+                // target_location 이름이 있고 좌표가 (0,0)인 경우 사전 조회
+                if (!job.target_location.empty() && target_x == 0.0f && target_z == 0.0f) {
+                    map.GetLocationCoords(job.target_location, target_x, target_z);
+                    job.target_x = target_x;
+                    job.target_z = target_z;
+                }
+
+                // A* 길찾기 수행
+                pathfinding.waypoints = map.FindPath(loc.x, loc.z, target_x, target_z);
+                pathfinding.current_waypoint_index = 0;
+
+                if (!pathfinding.waypoints.empty()) {
+                    if (!reg.all_of<VelocityComp>(entity)) {
+                        reg.emplace<VelocityComp>(entity);
+                    }
+                    auto& vel = reg.get<VelocityComp>(entity);
+                    vel.speed = 2.0f; // 기본 속도 2.0 m/s
+                    
+                    if (reg.all_of<IdentityComp>(entity)) {
+                        std::cout << "🧭 [경로 생성] " << reg.get<IdentityComp>(entity).display_name 
+                                  << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z 
+                                  << ")로의 경로를 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
+                    }
+                } else {
+                    // 경로 탐색 실패 또는 이미 도달함 -> 대기 상태 전환
+                    toil.state = ToilState::Idle;
+                    if (reg.all_of<VelocityComp>(entity)) {
+                        auto& vel = reg.get<VelocityComp>(entity);
+                        vel.dir_x = 0.0f;
+                        vel.dir_z = 0.0f;
+                        vel.speed = 0.0f;
+                    }
+                }
+            }
+        }
+    });
+}
+
+// 🆕 Axis 3: 실시간 20Hz 이동 처리 시스템
+void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick) {
+    constexpr float dt = 0.05f; // 20Hz 기준 dt
+
+    auto view = reg.view<LocationComp, ToilComp, PathfindingComp, VelocityComp, JobComp, IdentityComp>();
+    view.each([&](entt::entity entity, LocationComp& loc, ToilComp& toil, PathfindingComp& path, VelocityComp& vel, JobComp& job, IdentityComp& identity) {
+        if (toil.state == ToilState::Moving) {
+            if (path.current_waypoint_index >= path.waypoints.size()) {
+                // 더 이상 갈 노드가 없음 -> 목적지 도착
+                std::string old_loc = loc.location_name;
+                uint32_t old_zone = loc.zone_id;
+                uint32_t new_zone = grid.GetOrCreateZoneId(job.target_location);
+
+                loc.location_name = job.target_location;
+                loc.zone_id = new_zone;
+                loc.x = job.target_x;
+                loc.y = job.target_y;
+                loc.z = job.target_z;
+
+                if (new_zone != old_zone) {
+                    grid.Move(entity, old_zone, new_zone);
+                    std::cout << "🏃 [실시간 이동 완료] " << identity.display_name << " 이동: [" << old_loc << "] ➔ [" 
+                              << job.target_location << "] (행동: " << job.intent << ")" << std::endl;
+                }
+
+                toil.state = ToilState::Working;
+                toil.duration_ticks = 3;
+                toil.current_action = job.intent;
+                
+                auto& act = reg.get<ActivityComp>(entity);
+                act.current_activity = job.intent;
+
+                vel.dir_x = 0.0f;
+                vel.dir_z = 0.0f;
+                vel.speed = 0.0f;
+                path.waypoints.clear();
+                path.current_waypoint_index = 0;
+                
+                std::cout << "🏁 [목적지 도착] " << identity.display_name 
+                          << "이(가) 목적지에 도착하여 작업을 시작합니다." << std::endl;
+                return;
+            }
+
+            // 현재 타겟 웨이포인트 획득
+            const auto& target = path.waypoints[path.current_waypoint_index];
+
+            // 벡터 계산
+            float dx = target.x - loc.x;
+            float dz = target.z - loc.z;
+            float dist = std::sqrt(dx * dx + dz * dz);
+
+            if (dist < 0.1f) {
+                // 노드 근접 도달 -> 다음 노드로
+                path.current_waypoint_index++;
+                return;
+            }
+
+            // 방향 벡터 정규화
+            vel.dir_x = dx / dist;
+            vel.dir_z = dz / dist;
+
+            // 이동 거리
+            float move_step = vel.speed * dt;
+
+            if (move_step >= dist) {
+                // 이번 프레임에 노드에 완전 도달
+                loc.x = target.x;
+                loc.z = target.z;
+                path.current_waypoint_index++;
+            } else {
+                // 일반 이동
+                loc.x += vel.dir_x * move_step;
+                loc.z += vel.dir_z * move_step;
+            }
+        } else {
+            // Moving이 아닌 경우 속도 리셋
+            vel.dir_x = 0.0f;
+            vel.dir_z = 0.0f;
+            vel.speed = 0.0f;
+        }
+    });
 }
