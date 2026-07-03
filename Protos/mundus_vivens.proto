@@ -10,12 +10,16 @@ service MundusVivensGrpc {
   rpc InjectGossip (InjectGossipRequest) returns (InjectGossipResponse);
   rpc ProcessWorldTick (ProcessWorldTickRequest) returns (ProcessWorldTickResponse);
 
+  // 🆕 관찰자 모드: 실시간 이벤트 스트림 구독 (Phase 4-B 신규)
   rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
+
+  // 🆕 참여자 모드: 플레이어-NPC 간 대화 상호작용 (Phase 4-B 신규)
   rpc StartPlayerDialogue (StartPlayerDialogueRequest) returns (StartPlayerDialogueResponse);
   rpc SendPlayerMessage (SendPlayerMessageRequest) returns (SendPlayerMessageResponse);
   rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
   rpc GetWorldBootstrap (GetWorldBootstrapRequest) returns (GetWorldBootstrapResponse);
 
+  // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
   rpc BatchUpdateAgentStatus (BatchUpdateAgentStatusRequest) returns (BatchUpdateAgentStatusResponse);
 
   // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
@@ -34,9 +38,9 @@ message TriggerDialogueResponse {
   bool is_queued = 2;
   bool completed_immediately = 3;
   string dialogue_summary = 4;
-  repeated string dialogue_lines = 5;         //  디버깅 문자열 데이터
-  repeated DialogueLine structured_lines = 6; //  구조화된 대사 데이터 
-  repeated AgentEmotionUpdate emotion_updates = 7;
+  repeated string dialogue_lines = 5;
+  repeated DialogueLine structured_lines = 6; // 🆕 구조화된 대사 데이터 (하위호환 유지하며 추가)
+  repeated AgentEmotionUpdate emotion_updates = 7; // 🆕 대화에 따른 감정 업데이트
   repeated JobPayload next_jobs = 8; // 🆕 대화 결과에 따른 다음 행동들
 }
 
