@@ -50,6 +50,7 @@ namespace MundusVivens {
                 AgentEmotionUpdate update;
                 update.agent_id = proto_update.agent_id();
                 update.new_emotion = proto_update.new_emotion();
+                update.intensity = static_cast<int>(proto_update.intensity());
                 result.emotion_updates.push_back(update);
             }
 
@@ -113,18 +114,19 @@ namespace MundusVivens {
         return result;
     }
 
-    bool MundusVivensClient::InjectGossip(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, std::string& out_message) {
-        // 1. 소문을 주입할 대상 NPC, 소문의 주인공, 소문 내용 패킷 세팅
-        mundusvivens::InjectGossipRequest request;
+    bool MundusVivensClient::InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, std::string& out_message) {
+        // 1. 믿음(소문)을 주입할 대상 NPC, 소문의 주인공, 내용 패킷 세팅
+        mundusvivens::InjectBeliefRequest request;
         request.set_target_agent_id(target_agent_id);
         request.set_subject_id(subject_id);
         request.set_content(content);
+        request.set_belief_type(belief_type);
 
-        mundusvivens::InjectGossipResponse response;
+        mundusvivens::InjectBeliefResponse response;
         grpc::ClientContext context;
 
-        // 2. C# AI 세계관 내부로 소문 데이터를 강제 주입 지시
-        grpc::Status status = stub_->InjectGossip(&context, request, &response);
+        // 2. C# AI 세계관 내부로 믿음 데이터를 강제 주입 지시
+        grpc::Status status = stub_->InjectBelief(&context, request, &response);
 
         // 3. 통신 상태 및 비즈니스 로직 처리 결과 반환
         if (status.ok()) {
@@ -209,7 +211,13 @@ namespace MundusVivens {
         WorldBootstrapData result;
         if (status.ok()) {
             for (int i = 0; i < response.locations_size(); ++i) {
-                result.locations.push_back(response.locations(i).name());
+                const auto& proto_loc = response.locations(i);
+                LocationData loc;
+                loc.name = proto_loc.name();
+                loc.x = proto_loc.position().x();
+                loc.y = proto_loc.position().y();
+                loc.z = proto_loc.position().z();
+                result.locations.push_back(loc);
             }
             for (int i = 0; i < response.agents_size(); ++i) {
                 const auto& proto_agent = response.agents(i);
@@ -223,6 +231,7 @@ namespace MundusVivens {
                 agent.emotion = proto_agent.emotion();
                 agent.activity = proto_agent.activity();
                 agent.extroversion = proto_agent.extroversion();
+                agent.string_id = proto_agent.string_id();
                 for (int j = 0; j < proto_agent.relationships_size(); ++j) {
                     const auto& proto_rel = proto_agent.relationships(j);
                     RelationshipSnapshot snapshot;

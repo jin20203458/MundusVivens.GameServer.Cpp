@@ -29,7 +29,7 @@ void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick);
 
 float GetLocationSocialModifier(const std::string& location_name);
 
-void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
+void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis,
                                   GrpcResultQueue& grpc_queue);

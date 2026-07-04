@@ -55,9 +55,9 @@ void AsyncGrpcClient::EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCal
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::InjectGossipAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
+void AsyncGrpcClient::InjectBeliefAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, InjectBeliefCallback on_complete) {
     boost::asio::co_spawn(grpc_ctx_,
-        DoInjectGossip(target_agent_id, subject_id, std::move(content), std::move(on_complete)),
+        DoInjectBelief(target_agent_id, subject_id, std::move(content), belief_type, std::move(on_complete)),
         boost::asio::detached);
 }
 // -------------------------------------------------------------
@@ -144,7 +144,8 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
                 const auto& proto_update = response.emotion_updates(i);
                 result.emotion_updates.push_back(AgentEmotionUpdate{
                     proto_update.agent_id(),
-                    proto_update.new_emotion()
+                    proto_update.new_emotion(),
+                    static_cast<int>(proto_update.intensity())
                 });
             }
             result.next_jobs.reserve(response.next_jobs_size());
@@ -282,17 +283,18 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoEndPlayerDialogue(uint64_t sessi
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoInjectGossip(uint32_t target_agent_id, uint32_t subject_id, std::string content, InjectGossipCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoInjectBelief(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, InjectBeliefCallback on_complete) {
     try {
-        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncInjectGossip>;
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncInjectBelief>;
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
 
-        mundusvivens::InjectGossipRequest request;
+        mundusvivens::InjectBeliefRequest request;
         request.set_target_agent_id(target_agent_id);
         request.set_subject_id(subject_id);
         request.set_content(content);
-        mundusvivens::InjectGossipResponse response;
+        request.set_belief_type(belief_type);
+        mundusvivens::InjectBeliefResponse response;
 
         const grpc::Status status = co_await RPC::request(
             grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
@@ -304,7 +306,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoInjectGossip(uint32_t target_age
             on_complete(false, "gRPC error: " + status.error_message());
         }
     } catch (const std::exception& e) {
-        std::cerr << "❌ [Exception in InjectGossipAsync] " << e.what() << std::endl;
+        std::cerr << "❌ [Exception in InjectBeliefAsync] " << e.what() << std::endl;
     }
 }
 

@@ -10,7 +10,7 @@
 #include <string_view>
 #include "GrpcResultQueue.h"
 
-// 헬퍼 함수: 에이전트 문자열 ID와 정수 ID 간의 양방향 정적 매핑
+// 헬퍼 함수: 에이전트 문자열 ID와 정수 ID 간의 양방향 매핑 (컨텍스트 레지스트리 참조)
 inline uint32_t GetAgentNumericId(const entt::registry& reg, const std::string& string_id) {
     if (reg.ctx().contains<AgentIdMapper>()) {
         const auto& mapper = reg.ctx().get<AgentIdMapper>();
@@ -19,17 +19,6 @@ inline uint32_t GetAgentNumericId(const entt::registry& reg, const std::string& 
             return it->second;
         }
     }
-    if (string_id == "player") return 1;
-    if (string_id == "npc_eva") return 2;
-    if (string_id == "npc_kyle") return 3;
-    if (string_id == "npc_bart") return 4;
-    if (string_id == "npc_aileen") return 5;
-    if (string_id == "npc_cedric") return 6;
-    if (string_id == "npc_hugo") return 7;
-    if (string_id == "npc_lucas") return 8;
-    if (string_id == "npc_lyra") return 9;
-    if (string_id == "npc_maya") return 10;
-    if (string_id == "npc_valac") return 11;
     return 0;
 }
 
@@ -41,17 +30,6 @@ inline std::string GetAgentStringId(const entt::registry& reg, uint32_t numeric_
             return it->second;
         }
     }
-    if (numeric_id == 1) return "player";
-    if (numeric_id == 2) return "npc_eva";
-    if (numeric_id == 3) return "npc_kyle";
-    if (numeric_id == 4) return "npc_bart";
-    if (numeric_id == 5) return "npc_aileen";
-    if (numeric_id == 6) return "npc_cedric";
-    if (numeric_id == 7) return "npc_hugo";
-    if (numeric_id == 8) return "npc_lucas";
-    if (numeric_id == 9) return "npc_lyra";
-    if (numeric_id == 10) return "npc_maya";
-    if (numeric_id == 11) return "npc_valac";
     return "";
 }
 
@@ -307,7 +285,7 @@ float GetLocationSocialModifier(const std::string& location_name) {
 }
 
 // 4. 공간 그리드 기반 P2P 소셜 인터랙션 시스템 (주도자-응답자 모델)
-void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
+void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
                              MundusVivens::AsyncGrpcClient& client, int tick,
                              std::mt19937& gen, std::uniform_real_distribution<>& dis,
                              GrpcResultQueue& grpc_queue) {
@@ -538,6 +516,29 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
                 reg.get<ActivityComp>(ent).current_activity = "대화 요청 중";
                 reg.emplace_or_replace<BusyTag>(ent);
             }
+
+            // [브로드캐스트] 유니티 클라이언트에 대화 시작 전달
+            {
+                mundusvivens::DialogueEventPayload start_payload;
+                start_payload.set_task_id(0);
+                if (group_participants.size() > 0 && reg.all_of<IdentityComp>(group_participants[0])) {
+                    start_payload.set_npc_a_name(reg.get<IdentityComp>(group_participants[0]).display_name);
+                }
+                if (group_participants.size() > 1 && reg.all_of<IdentityComp>(group_participants[1])) {
+                    start_payload.set_npc_b_name(reg.get<IdentityComp>(group_participants[1]).display_name);
+                }
+                start_payload.set_is_started(true);
+                auto* start_loc = start_payload.mutable_location();
+                start_loc->set_name(zone_loc_name);
+                if (reg.all_of<LocationComp>(initiator)) {
+                    const auto& init_loc = reg.get<LocationComp>(initiator);
+                    auto* start_pos = start_loc->mutable_position();
+                    start_pos->set_x(init_loc.x);
+                    start_pos->set_y(init_loc.y);
+                    start_pos->set_z(init_loc.z);
+                }
+                BroadcastProto(tcp, PacketId::SC_DIALOGUE_EVENT, start_payload);
+            }
             // [비동기 gRPC 호출]
             client.TriggerDialogueAsync(std::move(group_ids), 
                 [&grpc_queue, group_participants, tick, zone_loc_name, &grid](bool success, const MundusVivens::DialogueResult& result) {
@@ -567,12 +568,44 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
                                 std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
                                 std::cout << result.dialogue_summary << std::endl;
                                 std::cout << "==============================================================" << std::endl;
-
                                 std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
                                 for (const auto& line : result.dialogue_lines) {
                                     std::cout << line << std::endl;
                                 }
                                 std::cout << "==============================================================\n" << std::endl;
+
+                                // [브로드캐스트] 유니티 클라이언트에 대화 종료 및 스크립트 대사 정보 전송
+                                {
+                                    mundusvivens::DialogueEventPayload end_payload;
+                                    end_payload.set_task_id(result.task_id);
+                                    if (group_participants.size() > 0 && reg.all_of<IdentityComp>(group_participants[0])) {
+                                        end_payload.set_npc_a_name(reg.get<IdentityComp>(group_participants[0]).display_name);
+                                    }
+                                    if (group_participants.size() > 1 && reg.all_of<IdentityComp>(group_participants[1])) {
+                                        end_payload.set_npc_b_name(reg.get<IdentityComp>(group_participants[1]).display_name);
+                                    }
+                                    end_payload.set_is_started(false);
+                                    end_payload.set_summary(result.dialogue_summary);
+                                    
+                                    auto* end_loc = end_payload.mutable_location();
+                                    end_loc->set_name(zone_loc_name);
+                                    if (group_participants.size() > 0 && reg.all_of<LocationComp>(group_participants[0])) {
+                                        const auto& end_pos_comp = reg.get<LocationComp>(group_participants[0]);
+                                        auto* end_pos = end_loc->mutable_position();
+                                        end_pos->set_x(end_pos_comp.x);
+                                        end_pos->set_y(end_pos_comp.y);
+                                        end_pos->set_z(end_pos_comp.z);
+                                    }
+
+                                    for (const auto& s_line : result.structured_lines) {
+                                        auto* new_line = end_payload.add_lines();
+                                        new_line->set_speaker_id(s_line.speaker_id);
+                                        new_line->set_speaker_name(s_line.speaker_name);
+                                        new_line->set_text(s_line.text);
+                                    }
+
+                                    BroadcastProto(tcp, PacketId::SC_DIALOGUE_EVENT, end_payload);
+                                }
                             }
 
                             // C++ 내부 감정 상태 갱신
@@ -588,43 +621,37 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
                                     if (reg.valid(target_ent) && reg.all_of<EmotionComp>(target_ent)) {
                                         auto& emo = reg.get<EmotionComp>(target_ent);
                                         const auto& identity = reg.get<IdentityComp>(target_ent);
+                                        
                                         emo.current_emotion = em_update.new_emotion;
-                                        std::cout << "🎭 [감정 동기화] " << identity.display_name << "의 감정이 [" << em_update.new_emotion 
-                                                   << "](으)로 업데이트되었습니다." << std::endl;
 
+                                        // 2. C#에서 전송된 동적 강도(intensity)에 따른 쇠퇴 틱수 결정
                                         int decay_ticks = 3;
+                                        std::string intensity_str = "MEDIUM";
+
+                                        if (em_update.intensity == 1) { // LOW
+                                            decay_ticks = 3;
+                                            intensity_str = "LOW";
+                                        } else if (em_update.intensity == 3) { // HIGH
+                                            decay_ticks = 10;
+                                            intensity_str = "HIGH";
+                                         } else { // MEDIUM (2) or default
+                                             decay_ticks = 6;
+                                             intensity_str = "MEDIUM";
+                                         }
+
+                                        // 1. 레지스트리 상의 고유 ID 매핑 처리 (O(1) 인덱스 및 동적 등록 유지)
                                         if (reg.ctx().contains<EmotionRegistry>()) {
                                             auto& emo_reg = reg.ctx().get<EmotionRegistry>();
+                                            std::cout << "🎭 [감정 동기화] " << identity.display_name << "의 감정이 [" << em_update.new_emotion 
+                                                      << "](으)로 업데이트되었습니다. 강도: [" << intensity_str << "] (" << decay_ticks << " 틱 유지)" << std::endl;
                                             auto it_emo = emo_reg.name_to_id.find(em_update.new_emotion);
                                             if (it_emo == emo_reg.name_to_id.end()) {
                                                 uint8_t next_id = static_cast<uint8_t>(emo_reg.decay_ticks_table.size());
                                                 emo_reg.name_to_id[em_update.new_emotion] = next_id;
-                                                emo_reg.decay_ticks_table.push_back(3);
+                                                emo_reg.decay_ticks_table.push_back(decay_ticks);
                                                 emo.current_emotion_id = next_id;
-                                                decay_ticks = 3;
                                             } else {
                                                 emo.current_emotion_id = it_emo->second;
-                                                decay_ticks = emo_reg.decay_ticks_table[emo.current_emotion_id];
-                                            }
-                                        } else {
-                                            std::string new_emo = em_update.new_emotion;
-                                            if (new_emo.find("분노") != std::string::npos || 
-                                                new_emo.find("적대") != std::string::npos || 
-                                                new_emo.find("공포") != std::string::npos || 
-                                                new_emo.find("우울") != std::string::npos || 
-                                                new_emo.find("슬픔") != std::string::npos || 
-                                                new_emo.find("의심") != std::string::npos || 
-                                                new_emo.find("경계") != std::string::npos ||
-                                                new_emo.find("냉소") != std::string::npos) {
-                                                decay_ticks = 10;
-                                            } else if (new_emo.find("기쁨") != std::string::npos || 
-                                                       new_emo.find("놀람") != std::string::npos || 
-                                                       new_emo.find("불안") != std::string::npos || 
-                                                       new_emo.find("기대") != std::string::npos ||
-                                                       new_emo.find("연민") != std::string::npos) {
-                                                decay_ticks = 6;
-                                            } else {
-                                                decay_ticks = 3;
                                             }
                                         }
                                         emo.decay_ticks_remaining = decay_ticks;
@@ -683,11 +710,11 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid,
                                                 std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
                                                           << zone_loc_name << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
 
-                                                async_client.InjectGossipAsync(bystander_id, subject_id, result.dialogue_summary, [bystander_name](bool success, const std::string& msg) {
+                                                async_client.InjectBeliefAsync(bystander_id, subject_id, result.dialogue_summary, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, [bystander_name](bool success, const std::string& msg) {
                                                     if (success) {
-                                                        std::cout << "📢 [소문 주입 성공] " << bystander_name << "의 기억에 소문이 주입되었습니다." << std::endl;
+                                                        std::cout << "📢 [믿음(소문) 주입 성공] " << bystander_name << "의 기억에 엿들은 정보가 주입되었습니다." << std::endl;
                                                     } else {
-                                                        std::cerr << "❌ [소문 주입 실패] " << bystander_name << ": " << msg << std::endl;
+                                                        std::cerr << "❌ [믿음(소문) 주입 실패] " << bystander_name << ": " << msg << std::endl;
                                                     }
                                                 });
                                             }
@@ -890,29 +917,19 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             resp.set_success(true);
             resp.set_message("로그인에 성공했습니다.");
 
-            auto* loc1 = resp.add_locations();
-            loc1->set_name("광장");
-            loc1->mutable_position()->set_x(0);
-            loc1->mutable_position()->set_y(0);
-            loc1->mutable_position()->set_z(0);
-
-            auto* loc2 = resp.add_locations();
-            loc2->set_name("여관");
-            loc2->mutable_position()->set_x(-15);
-            loc2->mutable_position()->set_y(0);
-            loc2->mutable_position()->set_z(-5);
-
-            auto* loc3 = resp.add_locations();
-            loc3->set_name("시장");
-            loc3->mutable_position()->set_x(30);
-            loc3->mutable_position()->set_y(0);
-            loc3->mutable_position()->set_z(10);
-
-            auto* loc4 = resp.add_locations();
-            loc4->set_name("성당");
-            loc4->mutable_position()->set_x(10);
-            loc4->mutable_position()->set_y(0);
-            loc4->mutable_position()->set_z(50);
+            if (reg.ctx().contains<MundusVivens::WorldBootstrapData>())
+            {
+                const auto& bootstrap = reg.ctx().get<MundusVivens::WorldBootstrapData>();
+                for (const auto& loc : bootstrap.locations)
+                {
+                    auto* new_loc = resp.add_locations();
+                    new_loc->set_name(loc.name);
+                    auto* pos = new_loc->mutable_position();
+                    pos->set_x(loc.x);
+                    pos->set_y(loc.y);
+                    pos->set_z(loc.z);
+                }
+            }
 
             // 현재 NPC 전체 상태 추가
             auto npc_view = reg.view<IdentityComp, LocationComp, EmotionComp, ActivityComp>(entt::exclude<PlayerTag>);

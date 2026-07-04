@@ -17,6 +17,7 @@ struct DialogueLine {
 struct AgentEmotionUpdate {
     uint32_t agent_id;
     std::string new_emotion;
+    int intensity = 0;
 };
 
 struct JobPayload {
@@ -68,11 +69,19 @@ struct InitialAgentState {
     std::string activity;
     float extroversion = 0.5f;
     std::vector<RelationshipSnapshot> relationships;
+    std::string string_id;
+};
+
+struct LocationData {
+    std::string name;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
 };
 
 // 🆕 월드 부트스트랩 데이터 구조체
 struct WorldBootstrapData {
-    std::vector<std::string> locations;
+    std::vector<LocationData> locations;
     std::vector<InitialAgentState> agents;
 };
 
@@ -109,8 +118,8 @@ public:
     // 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
     AgentStatus GetAgentStatus(uint32_t agent_id);
 
-    // 에바와 같은 특정 에이전트에게 소문을 강제로 주입합니다.
-    bool InjectGossip(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, std::string& out_message);
+    // 특정 에이전트에게 믿음(소문)을 강제로 주입합니다.
+    bool InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, std::string& out_message);
 
 
 

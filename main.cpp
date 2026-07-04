@@ -167,9 +167,12 @@ int main() {
     id_mapper.string_to_numeric["player"] = 1;
     id_mapper.numeric_to_string[1] = "player";
 
+    // 부트스트랩 데이터 컨텍스트에 등록 (로그인 시 클라이언트에 전달하기 위함)
+    registry.ctx().emplace<MundusVivens::WorldBootstrapData>(bootstrap);
+
     // 부트스트랩 위치 데이터 캐싱 및 Spatial Grid에 미리 Zone 생성
     for (const auto& loc : bootstrap.locations) {
-        spatial_grid.GetOrCreateZoneId(loc);
+        spatial_grid.GetOrCreateZoneId(loc.name);
     }
 
     // NPC 엔티티 생성
@@ -186,14 +189,17 @@ int main() {
         entity_index.by_npc_id[agent.agent_id] = entity;
 
         // 🆕 동적 에이전트 ID 매핑 테이블 빌드
-        id_mapper.numeric_to_string[agent.agent_id] = agent.name;
+        id_mapper.numeric_to_string[agent.agent_id] = agent.string_id;
+        id_mapper.string_to_numeric[agent.string_id] = agent.agent_id;
         id_mapper.string_to_numeric[agent.name] = agent.agent_id;
         
-        // 영어 식별자 접두사 매핑도 지원 (예: "npc_eva")
+        // 영어 식별자 및 이름의 소문자 버전도 추가 지원
+        std::string lower_string_id = agent.string_id;
+        std::transform(lower_string_id.begin(), lower_string_id.end(), lower_string_id.begin(), ::tolower);
+        id_mapper.string_to_numeric[lower_string_id] = agent.agent_id;
+
         std::string lower_name = agent.name;
         std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-        std::string english_id = "npc_" + lower_name;
-        id_mapper.string_to_numeric[english_id] = agent.agent_id;
         id_mapper.string_to_numeric[lower_name] = agent.agent_id;
 
         uint32_t zone_id = spatial_grid.GetOrCreateZoneId(agent.location);
@@ -343,19 +349,19 @@ int main() {
             // 🚀 Axis 2: Job 상태 머신 구동
             SystemJobDriver(registry, spatial_grid, tick, async_client, grpc_queue);
 
-            // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동
-            SystemPathfinding(registry, grid_map);
-            SystemMovement(registry, spatial_grid, tick);
-
             // 동일 공간 인접 검사 및 새 대화 비동기 트리거
-            SystemSocialInteraction(registry, spatial_grid, async_client, tick, gen, dis, grpc_queue);
+            SystemSocialInteraction(registry, spatial_grid, tcp_server, async_client, tick, gen, dis, grpc_queue);
 
             // 네트워크 동기화
             SystemNetworkSync(registry, async_client, grpc_queue);
-
-            // 월드 상태 스냅샷 클라이언트 브로드캐스트
-            SystemBroadcastWorldSnapshot(registry, tcp_server, tick);
         }
+
+        // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동 (20Hz)
+        SystemPathfinding(registry, grid_map);
+        SystemMovement(registry, spatial_grid, tick);
+
+        // 월드 상태 스냅샷 클라이언트 브로드캐스트 (20Hz)
+        SystemBroadcastWorldSnapshot(registry, tcp_server, tick);
 
         // 4. 5초마다(물리 틱 100회당 1회) C# AI 서버와 논리 틱 동기화 요청
         if (physical_tick % 100 == 0) {
