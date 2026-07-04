@@ -29,4 +29,6 @@ vcpkg_installed/
 
 # 로컬 전용 개인화 파일 (원격 저장소 제외)
 /README.local.md
-/build_local.ps1
+
+# 로그 파일 제외
+*.log

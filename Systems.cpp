@@ -110,8 +110,8 @@ void SystemEmotionDecay(entt::registry& reg) {
         }
 
         // 🆕 감정 전염 적용 (불안/경계 전이)
-        if (reg.all_of<LocationComp>(entity)) {
-            uint32_t zone_id = reg.get<LocationComp>(entity).zone_id;
+        if (auto* loc_comp = reg.try_get<LocationComp>(entity)) {
+            uint32_t zone_id = loc_comp->zone_id;
             auto it_neg = zone_negative_emotions.find(zone_id);
             if (it_neg != zone_negative_emotions.end() && !it_neg->second.empty()) {
                 // 이미 평온한 상태인 경우에만 감정 전염
@@ -154,15 +154,8 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
 
     view.each([&](entt::entity entity, LocationComp& loc, ActivityComp& act, IdentityComp& identity) {
         // JobComp와 ToilComp가 없으면 기본 생성
-        if (!reg.all_of<JobComp>(entity)) {
-            reg.emplace<JobComp>(entity);
-        }
-        if (!reg.all_of<ToilComp>(entity)) {
-            reg.emplace<ToilComp>(entity);
-        }
-
-        auto& job = reg.get<JobComp>(entity);
-        auto& toil = reg.get<ToilComp>(entity);
+        auto& job = reg.get_or_emplace<JobComp>(entity);
+        auto& toil = reg.get_or_emplace<ToilComp>(entity);
 
         // NPC가 대화중이거나 바쁘면 Toil 상태를 Interrupted로 전환하고 대기
         if (reg.all_of<BusyTag>(entity)) {
@@ -348,7 +341,10 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
             auto& init_cooldown = reg.get_or_emplace<CooldownComp>(initiator);
             if (tick <= init_cooldown.last_initiative_tick) continue; // 스팸 방지 (이번 틱에는 한 번만 시도)
 
-            float ext_i = reg.all_of<PersonalityComp>(initiator) ? reg.get<PersonalityComp>(initiator).extroversion : 0.5f;
+            float ext_i = 0.5f;
+            if (auto* pers = reg.try_get<PersonalityComp>(initiator)) {
+                ext_i = pers->extroversion;
+            }
 
             // 주도 확률 계산 (개인 속성만으로 결정)
             float initiation_prob = BASE_INITIATION_PROB * (0.3f + ext_i) * location_modifier;
@@ -386,18 +382,17 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                 if (dist > MAX_DIALOGUE_DISTANCE) continue;
 
                 // 호감도 조회
-                int liking_i_to_c = 0;
-                if (reg.all_of<RelationshipCacheComp>(initiator)) {
-                    const auto& rels = reg.get<RelationshipCacheComp>(initiator).relationships;
-                    auto it_rel = rels.find(id_c);
-                    if (it_rel != rels.end()) liking_i_to_c = it_rel->second.liking;
-                }
-                
-                int liking_c_to_i = 0;
-                if (reg.all_of<RelationshipCacheComp>(target_candidate)) {
-                    const auto& rels = reg.get<RelationshipCacheComp>(target_candidate).relationships;
-                    auto it_rel = rels.find(id_i);
-                    if (it_rel != rels.end()) liking_c_to_i = it_rel->second.liking;
+                int liking_i_to_c = 0;
+                if (auto* rel_comp = reg.try_get<RelationshipCacheComp>(initiator)) {
+                    const auto& rels = rel_comp->relationships;
+                    auto it_rel = rels.find(id_c);
+                    if (it_rel != rels.end()) liking_i_to_c = it_rel->second.liking;
+                }
+                int liking_c_to_i = 0;
+                if (auto* rel_comp = reg.try_get<RelationshipCacheComp>(target_candidate)) {
+                    const auto& rels = rel_comp->relationships;
+                    auto it_rel = rels.find(id_i);
+                    if (it_rel != rels.end()) liking_c_to_i = it_rel->second.liking;
                 }
 
                 // 대화 거부 (원수 관계)
@@ -425,13 +420,15 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
 
             // 타깃 수락 판정
             uint32_t id_t = reg.get<IdentityComp>(target).npc_id;
-            float ext_t = reg.all_of<PersonalityComp>(target) ? reg.get<PersonalityComp>(target).extroversion : 0.5f;
-            
-            int liking_t_to_i = 0;
-            if (reg.all_of<RelationshipCacheComp>(target)) {
-                const auto& rels = reg.get<RelationshipCacheComp>(target).relationships;
-                auto it_rel = rels.find(id_i);
-                if (it_rel != rels.end()) liking_t_to_i = it_rel->second.liking;
+            float ext_t = 0.5f;
+            if (auto* pers = reg.try_get<PersonalityComp>(target)) {
+                ext_t = pers->extroversion;
+            }
+            int liking_t_to_i = 0;
+            if (auto* rel_comp = reg.try_get<RelationshipCacheComp>(target)) {
+                const auto& rels = rel_comp->relationships;
+                auto it_rel = rels.find(id_i);
+                if (it_rel != rels.end()) liking_t_to_i = it_rel->second.liking;
             }
 
             float accept_prob = 0.5f + (ext_t * 0.25f) + (liking_t_to_i / 200.0f) + ((location_modifier - 1.0f) * 0.15f);
@@ -465,14 +462,14 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                 int member_count = 0;
                 for (auto member : group_participants) {
                     uint32_t member_id = reg.get<IdentityComp>(member).npc_id;
-                    if (reg.all_of<RelationshipCacheComp>(other)) {
-                        const auto& rels = reg.get<RelationshipCacheComp>(other).relationships;
-                        auto it_rel = rels.find(member_id);
-                        if (it_rel != rels.end()) {
-                            sum_liking += it_rel->second.liking;
-                            sum_trust += it_rel->second.trust;
-                            member_count++;
-                        }
+                    if (auto* rel_comp = reg.try_get<RelationshipCacheComp>(other)) {
+                        const auto& rels = rel_comp->relationships;
+                        auto it_rel = rels.find(member_id);
+                        if (it_rel != rels.end()) {
+                            sum_liking += it_rel->second.liking;
+                            sum_trust += it_rel->second.trust;
+                            member_count++;
+                        }
                     }
                 }
 
@@ -481,7 +478,10 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
 
                 if (avg_liking < 20.0f) continue;
 
-                float ext_o = reg.all_of<PersonalityComp>(other) ? reg.get<PersonalityComp>(other).extroversion : 0.5f;
+                float ext_o = 0.5f;
+                if (auto* pers = reg.try_get<PersonalityComp>(other)) {
+                    ext_o = pers->extroversion;
+                }
                 float join_personality = 0.5f + ext_o;
                 float join_relationship = 1.0f + (avg_liking / 100.0f) + ((avg_trust - 50.0f) / 100.0f);
                 float group_penalty = 2.0f / (float)group_participants.size();
@@ -517,25 +517,28 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                 reg.emplace_or_replace<BusyTag>(ent);
             }
 
-            // [브로드캐스트] 유니티 클라이언트에 대화 시작 전달
-            {
-                mundusvivens::DialogueEventPayload start_payload;
-                start_payload.set_task_id(0);
-                if (group_participants.size() > 0 && reg.all_of<IdentityComp>(group_participants[0])) {
-                    start_payload.set_npc_a_name(reg.get<IdentityComp>(group_participants[0]).display_name);
-                }
-                if (group_participants.size() > 1 && reg.all_of<IdentityComp>(group_participants[1])) {
-                    start_payload.set_npc_b_name(reg.get<IdentityComp>(group_participants[1]).display_name);
-                }
-                start_payload.set_is_started(true);
-                auto* start_loc = start_payload.mutable_location();
-                start_loc->set_name(zone_loc_name);
-                if (reg.all_of<LocationComp>(initiator)) {
-                    const auto& init_loc = reg.get<LocationComp>(initiator);
-                    auto* start_pos = start_loc->mutable_position();
-                    start_pos->set_x(init_loc.x);
-                    start_pos->set_y(init_loc.y);
-                    start_pos->set_z(init_loc.z);
+            // [브로드캐스트] 유니티 클라이언트에 대화 시작 전달
+            {
+                mundusvivens::DialogueEventPayload start_payload;
+                start_payload.set_task_id(0);
+                if (group_participants.size() > 0) {
+                    if (auto* ident = reg.try_get<IdentityComp>(group_participants[0])) {
+                        start_payload.set_npc_a_name(ident->display_name);
+                    }
+                }
+                if (group_participants.size() > 1) {
+                    if (auto* ident = reg.try_get<IdentityComp>(group_participants[1])) {
+                        start_payload.set_npc_b_name(ident->display_name);
+                    }
+                }
+                start_payload.set_is_started(true);
+                auto* start_loc = start_payload.mutable_location();
+                start_loc->set_name(zone_loc_name);
+                if (auto* init_loc = reg.try_get<LocationComp>(initiator)) {
+                    auto* start_pos = start_loc->mutable_position();
+                    start_pos->set_x(init_loc->x);
+                    start_pos->set_y(init_loc->y);
+                    start_pos->set_z(init_loc->z);
                 }
                 BroadcastProto(tcp, PacketId::SC_DIALOGUE_EVENT, start_payload);
             }
@@ -578,23 +581,27 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                 {
                                     mundusvivens::DialogueEventPayload end_payload;
                                     end_payload.set_task_id(result.task_id);
-                                    if (group_participants.size() > 0 && reg.all_of<IdentityComp>(group_participants[0])) {
-                                        end_payload.set_npc_a_name(reg.get<IdentityComp>(group_participants[0]).display_name);
-                                    }
-                                    if (group_participants.size() > 1 && reg.all_of<IdentityComp>(group_participants[1])) {
-                                        end_payload.set_npc_b_name(reg.get<IdentityComp>(group_participants[1]).display_name);
-                                    }
-                                    end_payload.set_is_started(false);
-                                    end_payload.set_summary(result.dialogue_summary);
-                                    
-                                    auto* end_loc = end_payload.mutable_location();
-                                    end_loc->set_name(zone_loc_name);
-                                    if (group_participants.size() > 0 && reg.all_of<LocationComp>(group_participants[0])) {
-                                        const auto& end_pos_comp = reg.get<LocationComp>(group_participants[0]);
-                                        auto* end_pos = end_loc->mutable_position();
-                                        end_pos->set_x(end_pos_comp.x);
-                                        end_pos->set_y(end_pos_comp.y);
-                                        end_pos->set_z(end_pos_comp.z);
+                                    if (group_participants.size() > 0) {
+                                        if (auto* ident = reg.try_get<IdentityComp>(group_participants[0])) {
+                                            end_payload.set_npc_a_name(ident->display_name);
+                                        }
+                                    }
+                                    if (group_participants.size() > 1) {
+                                        if (auto* ident = reg.try_get<IdentityComp>(group_participants[1])) {
+                                            end_payload.set_npc_b_name(ident->display_name);
+                                        }
+                                    }
+                                    end_payload.set_is_started(false);
+                                    end_payload.set_summary(result.dialogue_summary);
+                                    auto* end_loc = end_payload.mutable_location();
+                                    end_loc->set_name(zone_loc_name);
+                                    if (group_participants.size() > 0) {
+                                        if (auto* end_pos_comp = reg.try_get<LocationComp>(group_participants[0])) {
+                                            auto* end_pos = end_loc->mutable_position();
+                                            end_pos->set_x(end_pos_comp->x);
+                                            end_pos->set_y(end_pos_comp->y);
+                                            end_pos->set_z(end_pos_comp->z);
+                                        }
                                     }
 
                                     for (const auto& s_line : result.structured_lines) {
@@ -618,9 +625,12 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                         target_ent = idx_it->second;
                                     }
 
-                                    if (reg.valid(target_ent) && reg.all_of<EmotionComp>(target_ent)) {
-                                        auto& emo = reg.get<EmotionComp>(target_ent);
-                                        const auto& identity = reg.get<IdentityComp>(target_ent);
+                                    if (reg.valid(target_ent)) {
+                                        auto* emo_ptr = reg.try_get<EmotionComp>(target_ent);
+                                        auto* identity_ptr = reg.try_get<IdentityComp>(target_ent);
+                                        if (emo_ptr && identity_ptr) {
+                                            auto& emo = *emo_ptr;
+                                            const auto& identity = *identity_ptr;
                                         
                                         emo.current_emotion = em_update.new_emotion;
 
@@ -654,7 +664,8 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                                 emo.current_emotion_id = it_emo->second;
                                             }
                                         }
-                                        emo.decay_ticks_remaining = decay_ticks;
+                                        emo.decay_ticks_remaining = decay_ticks;
+                                        }
                                     }
                                 }
 
@@ -702,21 +713,23 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                     std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
                                     for (auto ent : bystanders) {
                                         if (part_set.find(ent) == part_set.end()) {
-                                            if (reg.valid(ent) && reg.all_of<IdentityComp>(ent)) {
-                                                uint32_t bystander_id = reg.get<IdentityComp>(ent).npc_id;
-                                                std::string bystander_name = reg.get<IdentityComp>(ent).display_name;
+                                            if (reg.valid(ent)) {
+                                                if (auto* bystander_ident = reg.try_get<IdentityComp>(ent)) {
+                                                    uint32_t bystander_id = bystander_ident->npc_id;
+                                                    std::string bystander_name = bystander_ident->display_name;
                                                 uint32_t subject_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
 
                                                 std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
                                                           << zone_loc_name << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
 
-                                                async_client.InjectBeliefAsync(bystander_id, subject_id, result.dialogue_summary, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, [bystander_name](bool success, const std::string& msg) {
-                                                    if (success) {
-                                                        std::cout << "📢 [믿음(소문) 주입 성공] " << bystander_name << "의 기억에 엿들은 정보가 주입되었습니다." << std::endl;
-                                                    } else {
-                                                        std::cerr << "❌ [믿음(소문) 주입 실패] " << bystander_name << ": " << msg << std::endl;
-                                                    }
-                                                });
+                                                async_client.InjectBeliefAsync(bystander_id, subject_id, result.dialogue_summary, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, [bystander_name](bool success, const std::string& msg) {
+                                                        if (success) {
+                                                            std::cout << "📢 [믿음(소문) 주입 성공] " << bystander_name << "의 기억에 엿들은 정보가 주입되었습니다." << std::endl;
+                                                        } else {
+                                                            std::cerr << "❌ [믿음(소문) 주입 실패] " << bystander_name << ": " << msg << std::endl;
+                                                        }
+                                                    });
+                                                }
                                             }
                                         }
                                     }
@@ -1197,10 +1210,7 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
     auto view = reg.view<JobComp, ToilComp, LocationComp>();
     view.each([&](entt::entity entity, JobComp& job, ToilComp& toil, LocationComp& loc) {
         if (toil.state == ToilState::Moving) {
-            if (!reg.all_of<PathfindingComp>(entity)) {
-                reg.emplace<PathfindingComp>(entity);
-            }
-            auto& pathfinding = reg.get<PathfindingComp>(entity);
+            auto& pathfinding = reg.get_or_emplace<PathfindingComp>(entity);
 
             // 경로가 비어있는 경우 새로 계산
             if (pathfinding.waypoints.empty()) {
@@ -1218,17 +1228,12 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
                 pathfinding.waypoints = map.FindPath(loc.x, loc.z, target_x, target_z);
                 pathfinding.current_waypoint_index = 0;
 
-                if (!pathfinding.waypoints.empty()) {
-                    if (!reg.all_of<VelocityComp>(entity)) {
-                        reg.emplace<VelocityComp>(entity);
-                    }
-                    auto& vel = reg.get<VelocityComp>(entity);
+                if (!pathfinding.waypoints.empty()) {
+                    auto& vel = reg.get_or_emplace<VelocityComp>(entity);
                     vel.speed = 2.0f; // 기본 속도 2.0 m/s
                     
-                    if (reg.all_of<IdentityComp>(entity)) {
-                        std::cout << "🧭 [경로 생성] " << reg.get<IdentityComp>(entity).display_name 
-                                  << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z 
-                                  << ")로의 경로를 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
+                    if (auto* ident = reg.try_get<IdentityComp>(entity)) {
+                        std::cout << "🧭 [경로 생성] " << ident->display_name << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z << ")로의 경로를 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
                     }
                 } else {
                     // 경로 탐색 실패 또는 이미 도달함 -> 대기 상태 전환

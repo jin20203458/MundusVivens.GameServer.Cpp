@@ -81,10 +81,12 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
     // A* 알고리즘 데이터 구조
     std::priority_queue<AStarNode, std::vector<AStarNode>, std::greater<AStarNode>> open_set;
     
-    // 비용 초기화: 매우 큰 값 (1e9)
-    std::vector<std::vector<float>> g_score(WIDTH, std::vector<float>(HEIGHT, 1e9f));
-    // 부모 노드 추적 맵
-    std::vector<std::vector<std::pair<int, int>>> parent(WIDTH, std::vector<std::pair<int, int>>(HEIGHT, {-1, -1}));
+    // 비용 초기화 및 부모 노드 추적 맵 캐싱 (thread_local flat vector로 힙 할당 제로화)
+    thread_local std::vector<float> g_score;
+    thread_local std::vector<std::pair<int, int>> parent;
+
+    g_score.assign(WIDTH * HEIGHT, 1e9f);
+    parent.assign(WIDTH * HEIGHT, {-1, -1});
 
     auto heuristic = [](int x1, int z1, int x2, int z2) -> float {
         // Octile distance (대각선 지원)
@@ -93,7 +95,7 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
         return (dx + dz) + (1.41421356f - 2.0f) * std::min(dx, dz);
     };
 
-    g_score[sx][sz] = 0.0f;
+    g_score[sx * HEIGHT + sz] = 0.0f;
     float h_start = heuristic(sx, sz, ex, ez);
     open_set.push({sx, sz, 0.0f, h_start});
 
@@ -113,7 +115,7 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
             break;
         }
 
-        if (curr.g > g_score[curr.x][curr.z]) continue;
+        if (curr.g > g_score[curr.x * HEIGHT + curr.z]) continue;
 
         for (int i = 0; i < 8; ++i) {
             int nx = curr.x + dx[i];
@@ -128,9 +130,10 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
                 }
 
                 float tentative_g = curr.g + move_cost[i];
-                if (tentative_g < g_score[nx][nz]) {
-                    g_score[nx][nz] = tentative_g;
-                    parent[nx][nz] = {curr.x, curr.z};
+                int n_idx = nx * HEIGHT + nz;
+                if (tentative_g < g_score[n_idx]) {
+                    g_score[n_idx] = tentative_g;
+                    parent[n_idx] = {curr.x, curr.z};
                     open_set.push({nx, nz, tentative_g, tentative_g + heuristic(nx, nz, ex, ez)});
                 }
             }
@@ -143,7 +146,7 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
         std::vector<GridVector2> rev_path;
         while (cx != -1 && cz != -1) {
             rev_path.push_back({static_cast<float>(cx), static_cast<float>(cz)});
-            auto p = parent[cx][cz];
+            auto p = parent[cx * HEIGHT + cz];
             cx = p.first;
             cz = p.second;
         }

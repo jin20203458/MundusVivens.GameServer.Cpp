@@ -128,14 +128,15 @@ void ClientSession::Send(uint16_t packet_id, const uint8_t* payload, size_t size
         std::memcpy(target_ptr + HEADER_SIZE, payload, size);
     }
 
-    // 🆕 비동기 채널에 논블로킹 시도 (용량 초과 시 버려짐)
-    if (!write_channel_.try_send(boost::system::error_code{}, buf)) {
-        std::cerr << "[ClientSession] 송신 채널 포화 - 패킷 폐기 (세션: " << index_ << ")" << std::endl;
-        if (buf.is_heap) {
-            delete[] buf.heap_data; // 힙 할당된 대형 패킷 메모리 직접 수동 해제
+    // 스레드 안전성 보장: IO 스레드(socket_ executor)로 dispatch하여 채널 동시 호출 방지
+    boost::asio::post(socket_.get_executor(), [self = shared_from_this(), buf]() {
+        if (!self->write_channel_.try_send(boost::system::error_code{}, buf)) {
+            std::cerr << "[ClientSession] 송신 채널 포화 - 패킷 폐기 (세션: " << self->index_ << ")" << std::endl;
+            if (buf.is_heap) {
+                delete[] buf.heap_data; // 힙 할당된 대형 패킷 메모리 직접 수동 해제
+            }
         }
-        return;
-    }
+    });
 }
 
 boost::asio::awaitable<void> ClientSession::WriteLoop() {
