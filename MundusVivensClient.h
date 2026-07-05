@@ -79,10 +79,20 @@ struct LocationData {
     float z = 0.0f;
 };
 
+struct FurnitureData {
+    std::string name;
+    std::string type;
+    std::string parent_location;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
 // 🆕 월드 부트스트랩 데이터 구조체
 struct WorldBootstrapData {
     std::vector<LocationData> locations;
     std::vector<InitialAgentState> agents;
+    std::vector<FurnitureData> furniture;
 };
 
 struct AgentStatus {

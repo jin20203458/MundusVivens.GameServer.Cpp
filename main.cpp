@@ -175,6 +175,28 @@ int main() {
         spatial_grid.GetOrCreateZoneId(loc.name);
     }
 
+    // 🆕 부트스트랩 가구(사물) 데이터 로드 및 엔티티 생성
+    std::cout << "[C++ 서버] " << bootstrap.furniture.size() << "개의 가구/사물 오브젝트 데이터를 동적 배치하는 중..." << std::endl;
+    for (const auto& furn : bootstrap.furniture) {
+        auto furn_entity = registry.create();
+        
+        registry.emplace<IdentityComp>(furn_entity, 0u, furn.name);
+        
+        uint32_t zone_id = spatial_grid.GetOrCreateZoneId(furn.parent_location);
+        registry.emplace<LocationComp>(furn_entity, zone_id, furn.parent_location, furn.x, furn.y, furn.z);
+        
+        AffordanceType aff_type = AffordanceType::Sit;
+        if (furn.type == "Sleep") aff_type = AffordanceType::Sleep;
+        else if (furn.type == "Eat") aff_type = AffordanceType::Eat;
+        else if (furn.type == "Drink") aff_type = AffordanceType::Drink;
+        else if (furn.type == "Pray") aff_type = AffordanceType::Pray;
+        
+        registry.emplace<AffordanceComp>(furn_entity, aff_type, entt::null);
+        
+        // 가구를 SpatialGrid 공간에 등록
+        spatial_grid.Insert(furn_entity, zone_id);
+    }
+
     // NPC 엔티티 생성
     size_t npc_count = 0;
     for (const auto& agent : bootstrap.agents) {
@@ -228,6 +250,14 @@ int main() {
 
         registry.emplace<JobComp>(entity);
         registry.emplace<ToilComp>(entity);
+
+        // 🆕 생체 욕구 컴포넌트 추가 및 난수(50~90) 스태거링
+        auto& needs = registry.emplace<NeedsComp>(entity);
+        std::random_device rd_needs;
+        std::mt19937 gen_needs(rd_needs());
+        std::uniform_real_distribution<float> dist_needs(50.0f, 90.0f);
+        needs.hunger = dist_needs(gen_needs);
+        needs.fatigue = dist_needs(gen_needs);
 
         registry.emplace<LastSyncedComp>(entity, agent.location, agent.emotion, agent.activity);
 
@@ -339,6 +369,14 @@ int main() {
                                     auto& toil = inner_reg.get_or_emplace<ToilComp>(target_ent);
                                     toil.state = ToilState::Idle;
                                     toil.duration_ticks = 0;
+
+                                    // 🆕 새 스케줄(Job)이 수신되었으므로, 대기 중이던 ScheduleWait BusyTag 해제
+                                    if (inner_reg.all_of<BusyTag>(target_ent)) {
+                                        auto& busy = inner_reg.get<BusyTag>(target_ent);
+                                        if (busy.reason == BusyReason::ScheduleWait) {
+                                            inner_reg.erase<BusyTag>(target_ent);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -357,14 +395,17 @@ int main() {
         }
 
         // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동 (20Hz)
+        SystemBusyAmbient(registry, 0.05f);
+        SystemSurvivalOverride(registry, tick, async_client, grpc_queue); // 🆕 생체 위기 감지 및 인터럽트
         SystemPathfinding(registry, grid_map);
         SystemMovement(registry, spatial_grid, tick);
+        SystemAffordanceResolver(registry, spatial_grid, tick, async_client, grpc_queue); // 🆕 사물 상호작용 및 충전
 
         // 월드 상태 스냅샷 클라이언트 브로드캐스트 (20Hz)
         SystemBroadcastWorldSnapshot(registry, tcp_server, tick);
 
-        // 4. 5초마다(물리 틱 100회당 1회) C# AI 서버와 논리 틱 동기화 요청
-        if (physical_tick % 100 == 0) {
+        // 4. 10초마다(물리 틱 200회당 1회) C# AI 서버와 논리 틱 동기화 요청
+        if (physical_tick % 200 == 0) {
             if (!is_tick_sync_pending) {
                 is_tick_sync_pending = true;
                 int target_tick = tick + 1;
@@ -407,7 +448,7 @@ int main() {
     auto busy_view = registry.view<BusyTag, IdentityComp, LocationComp, EmotionComp, ActivityComp>();
     std::vector<MundusVivens::AgentStatusUpdate> shutdown_updates;
     std::string participant_names = "";
-    busy_view.each([&](const IdentityComp& identity, const LocationComp& location, const EmotionComp& emotion, ActivityComp& activity) {
+    busy_view.each([&](BusyTag& busy, const IdentityComp& identity, const LocationComp& location, const EmotionComp& emotion, ActivityComp& activity) {
         if (activity.current_activity == "대화 요청 중" || activity.current_activity == "플레이어와 대화 중" || activity.current_activity == "플레이어와 대화 대기") {
             participant_names += identity.display_name + " ";
             activity.current_activity = "대기";

@@ -242,6 +242,17 @@ namespace MundusVivens {
                 }
                 result.agents.push_back(agent);
             }
+            for (int i = 0; i < response.furniture_size(); ++i) {
+                const auto& proto_furn = response.furniture(i);
+                FurnitureData furn;
+                furn.name = proto_furn.name();
+                furn.type = proto_furn.type();
+                furn.parent_location = proto_furn.parent_location();
+                furn.x = proto_furn.position().x();
+                furn.y = proto_furn.position().y();
+                furn.z = proto_furn.position().z();
+                result.furniture.push_back(furn);
+            }
         }
         else {
             std::cerr << "[부트스트랩 에러] gRPC 통신 실패: " << status.error_message() << std::endl;

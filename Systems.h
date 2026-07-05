@@ -44,4 +44,13 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
 
 void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick);
 
+// 🆕 NPC 대기 중 상태 조율 시스템
+void SystemBusyAmbient(entt::registry& reg, float deltaTime);
+
+// 🆕 생체 욕구 및 인터럽트 오버라이드 시스템
+void SystemSurvivalOverride(entt::registry& reg, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
+
+// 🆕 사물 상호작용 및 욕구 충전 시스템
+void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
+
 

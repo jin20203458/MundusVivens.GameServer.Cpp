@@ -102,6 +102,30 @@ struct ToilComp {
     int32_t duration_ticks = 0;
 };
 
+// 🆕 생체 욕구 컴포넌트
+struct NeedsComp {
+    float hunger = 100.0f;
+    float fatigue = 100.0f;
+    bool is_resolving_survival = false;
+    std::string current_survival_type; // "hunger", "fatigue", 또는 ""
+    entt::entity occupied_furniture = entt::null; // 점유 중인 가구/사물 엔티티
+};
+
+// 🆕 사물 상호작용 종류
+enum class AffordanceType {
+    Sit,
+    Sleep,
+    Eat,
+    Drink,
+    Pray
+};
+
+// 🆕 사물 상호작용 컴포넌트
+struct AffordanceComp {
+    AffordanceType type;
+    entt::entity occupied_by = entt::null;
+};
+
 // 네트워크 동기화 캐시 
 struct LastSyncedComp {
     std::string location;
@@ -109,8 +133,18 @@ struct LastSyncedComp {
     std::string activity;
 };
 
-// 대화 중인 바쁜 NPC를 나타내는 태그 컴포넌트
-struct BusyTag {};
+// 🆕 대기 멈춤의 원인 열거형
+enum class BusyReason {
+    Dialogue,
+    Reflection,
+    ScheduleWait
+};
+
+// 대화 중이거나 성찰/계획대기 중인 바쁜 NPC를 나타내는 상태 컴포넌트
+struct BusyTag {
+    BusyReason reason = BusyReason::Dialogue;
+    float anim_timer = 0.0f;
+};
 
 // 접속한 플레이어를 나타내는 태그 컴포넌트
 struct PlayerTag {
