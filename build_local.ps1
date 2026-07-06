@@ -19,6 +19,24 @@ if ($Clean) {
     }
 }
 
+# 1.5. gRPC Proto 동기화 (내용이 다를 경우 최신 수정본으로 양방향 동기화)
+$CppProto = "Protos/mundus_vivens.proto"
+$CsProto = "../MundusVivens/MundusVivens.Prototype/Protos/mundus_vivens.proto"
+
+if (Test-Path $CsProto) {
+    if ((Get-FileHash $CppProto).Hash -ne (Get-FileHash $CsProto).Hash) {
+        $CppTime = (Get-Item $CppProto).LastWriteTime
+        $CsTime = (Get-Item $CsProto).LastWriteTime
+        if ($CppTime -gt $CsTime) {
+            Copy-Item -Path $CppProto -Destination $CsProto -Force
+            Write-Host "🔄 [Proto Sync] C++ 프로토가 최신 버전입니다. C# 프로젝트로 동기화했습니다." -ForegroundColor Green
+        } else {
+            Copy-Item -Path $CsProto -Destination $CppProto -Force
+            Write-Host "🔄 [Proto Sync] C# 프로토가 최신 버전입니다. C++ 프로젝트로 동기화했습니다." -ForegroundColor Green
+        }
+    }
+}
+
 # 2. 설치된 Visual Studio의 vcvars64.bat 경로 자동 탐색 (vswhere 활용)
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vcvars = $null

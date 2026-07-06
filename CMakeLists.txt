@@ -2,10 +2,8 @@ cmake_minimum_required(VERSION 3.15)
 
 # vcpkg가 설치된 경로를 자동으로 감지하여 툴체인 파일 지정
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    if(EXISTS "C:/Users/user/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "C:/Users/user/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
-    elseif(EXISTS "C:/Users/adg01/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "C:/Users/adg01/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    if(DEFINED ENV{USERPROFILE} AND EXISTS "$ENV{USERPROFILE}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{USERPROFILE}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
     endif()
 endif()
 
