@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include "MundusVivensClient.h"
 
 struct GridVector2 {
     float x = 0.0f;
@@ -14,11 +15,11 @@ struct GridVector2 {
 
 class GridMap {
 public:
-    static constexpr int WIDTH = 100;
-    static constexpr int HEIGHT = 100;
+    static constexpr int WIDTH = 2000;
+    static constexpr int HEIGHT = 2000;
 
     GridMap();
-    void LoadMap();
+    void LoadMap(const std::vector<MundusVivens::LocationData>& locations);
     bool IsWalkable(int x, int z) const;
     
     // 거점 이름으로 좌표 조회
@@ -28,6 +29,6 @@ public:
     std::vector<GridVector2> FindPath(float start_x, float start_z, float end_x, float end_z) const;
 
 private:
-    bool grid_[WIDTH][HEIGHT];
+    std::vector<bool> grid_;
     std::unordered_map<std::string, GridVector2> location_coords_;
 };

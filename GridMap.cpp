@@ -5,34 +5,26 @@
 #include <iostream>
 
 GridMap::GridMap() {
-    for (int x = 0; x < WIDTH; ++x) {
-        for (int z = 0; z < HEIGHT; ++z) {
-            grid_[x][z] = true; // 기본적으로 모두 이동 가능
-        }
-    }
+    grid_.assign(WIDTH * HEIGHT, true);
 }
 
-void GridMap::LoadMap() {
-    // 1. 8대 주요 거점 좌표 사전 채우기 (Mundus Vivens 전체 맵 연동)
-    location_coords_["Manor"] = {85.0f, 90.0f};        // 영주 저택
-    location_coords_["Church"] = {20.0f, 80.0f};       // 성당
-    location_coords_["Guard Post"] = {15.0f, 20.0f};   // 경비 초소
-    location_coords_["Alchemy Lab"] = {80.0f, 70.0f};  // 연금술 공방
-    location_coords_["Square"] = {50.0f, 50.0f};       // 마을 광장
-    location_coords_["Forge"] = {70.0f, 30.0f};        // 대장간
-    location_coords_["Back Alley"] = {15.0f, 50.0f};   // 뒷골목
-    location_coords_["Tavern"] = {30.0f, 40.0f};       // 술집
+void GridMap::LoadMap(const std::vector<MundusVivens::LocationData>& locations) {
+    // 1. C#에서 넘겨준 부트스트랩 데이터로 거점 좌표 동적 구성 (하드코딩 완전 제거)
+    for (const auto& loc : locations) {
+        location_coords_[loc.name] = { loc.x, loc.z };
+        std::cout << "🗺️ [GridMap] 거점 로드 완료: " << loc.name << " (" 
+                  << loc.x << ", " << loc.z << ")" << std::endl;
+    }
 
     // 2. 간단한 장애물 배치 (예: 중앙부 수직 벽 x=45, z=30~70)
-    // A*가 이 벽을 피해 가는지 검증하기 위함
     for (int z = 30; z <= 70; ++z) {
-        grid_[45][z] = false;
+        grid_[45 * HEIGHT + z] = false;
     }
 }
 
 bool GridMap::IsWalkable(int x, int z) const {
     if (x < 0 || x >= WIDTH || z < 0 || z >= HEIGHT) return false;
-    return grid_[x][z];
+    return grid_[x * HEIGHT + z];
 }
 
 bool GridMap::GetLocationCoords(const std::string& loc_name, float& out_x, float& out_z) const {

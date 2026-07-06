@@ -139,7 +139,7 @@ int main() {
     entt::registry registry;
     SpatialHashGrid spatial_grid;
     GridMap grid_map;
-    grid_map.LoadMap();
+    grid_map.LoadMap(bootstrap.locations);
 
     // EntityIndex 등록 (O(1) 역방향 탐색용 싱글톤 리소스 - Task B)
     auto& entity_index = registry.ctx().emplace<EntityIndex>();
@@ -361,6 +361,9 @@ int main() {
                                     }
                                     job.job_id = job_payload.job_id;
                                     job.target_location = job_payload.target_location;
+                                    job.target_x = job_payload.target_x;
+                                    job.target_y = job_payload.target_y;
+                                    job.target_z = job_payload.target_z;
                                     job.intent = job_payload.intent;
                                     job.target_agent_id = job_payload.target_agent_id;
                                     job.priority = job_payload.priority;
@@ -396,7 +399,7 @@ int main() {
 
         // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동 (20Hz)
         SystemBusyAmbient(registry, 0.05f);
-        SystemSurvivalOverride(registry, tick, async_client, grpc_queue); // 🆕 생체 위기 감지 및 인터럽트
+        SystemSurvivalOverride(registry, spatial_grid, tick, async_client, grpc_queue); // 🆕 생체 위기 감지 및 인터럽트
         SystemPathfinding(registry, grid_map);
         SystemMovement(registry, spatial_grid, tick);
         SystemAffordanceResolver(registry, spatial_grid, tick, async_client, grpc_queue); // 🆕 사물 상호작용 및 충전

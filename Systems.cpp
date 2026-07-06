@@ -214,6 +214,20 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                 if (loc.location_name != job.target_location) {
                     toil.state = ToilState::Moving;
                     act.current_activity = "이동 중: " + job.target_location;
+
+                    // 🆕 원정 출발 전 생체 욕구 완충 (황무지 무역 대비)
+                    float dx = job.target_x - loc.x;
+                    float dz = job.target_z - loc.z;
+                    float dist = std::sqrt(dx * dx + dz * dz);
+                    if (dist > 150.0f) {
+                        if (reg.all_of<NeedsComp>(entity)) {
+                            auto& needs = reg.get<NeedsComp>(entity);
+                            needs.hunger = 100.0f;
+                            needs.fatigue = 100.0f;
+                            std::cout << "🎒 [원정 준비] " << identity.display_name << "이(가) 장거리 여행(" 
+                                      << job.target_location << ")에 대비해 식사와 휴식을 완전 충전하고 출발합니다." << std::endl;
+                        }
+                    }
                 } else {
                     toil.state = ToilState::Working;
                     toil.duration_ticks = 3; // 기본적으로 3틱(15초) 동안 해당 활동 진행
@@ -1402,18 +1416,39 @@ static std::string GetAgentHomeLocation(uint32_t npc_id, float& out_x, float& ou
 }
 
 // 🆕 생체 욕구 및 인터럽트 오버라이드 시스템 구현
-void SystemSurvivalOverride(entt::registry& reg, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
+void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     auto view = reg.view<NeedsComp, LocationComp, ToilComp, JobComp, IdentityComp>();
     view.each([&](entt::entity entity, NeedsComp& needs, LocationComp& loc, ToilComp& toil, JobComp& job, IdentityComp& identity) {
         auto& path = reg.get_or_emplace<PathfindingComp>(entity);
 
-        // 매 물리 틱마다 욕구 감소 연산 (20Hz 기준 서서히 감쇠)
-        // 🆕 대뇌 락 중이더라도 대화는 소모로 간주하며, 단 현재 해결 중인 생체 욕구만 감쇠를 면제함
-        if (!needs.is_resolving_survival || needs.current_survival_type != "hunger") {
-            needs.hunger -= 0.018f;
+        // 🆕 계획 수면/식사 여부 판별
+        bool is_scheduled_sleep = false;
+        bool is_scheduled_eat = false;
+        if (job.is_active && toil.state == ToilState::Working) {
+            std::string intent = job.intent;
+            if (intent.find("Sleep") != std::string::npos || intent.find("sleep") != std::string::npos ||
+                intent.find("잠") != std::string::npos || intent.find("수면") != std::string::npos ||
+                intent.find("취침") != std::string::npos || intent.find("휴식") != std::string::npos || 
+                intent.find("rest") != std::string::npos) {
+                is_scheduled_sleep = true;
+            } else if (intent.find("Eat") != std::string::npos || intent.find("eat") != std::string::npos ||
+                       intent.find("밥") != std::string::npos || intent.find("식사") != std::string::npos ||
+                       intent.find("음식") != std::string::npos || intent.find("먹기") != std::string::npos ||
+                       intent.find("취식") != std::string::npos) {
+                is_scheduled_eat = true;
+            }
         }
-        if (!needs.is_resolving_survival || needs.current_survival_type != "fatigue") {
-            needs.fatigue -= 0.012f;
+
+        // 매 물리 틱마다 욕구 감소 연산 (20Hz 기준 서서히 감쇠)
+        // 🆕 대뇌 락 중이거나 계획 활동을 통해 해결 중인 생체 욕구만 감쇠를 면제함
+        bool skip_hunger_decay = (needs.is_resolving_survival && needs.current_survival_type == "hunger") || (is_scheduled_eat && needs.occupied_furniture != entt::null);
+        bool skip_fatigue_decay = (needs.is_resolving_survival && needs.current_survival_type == "fatigue") || (is_scheduled_sleep && needs.occupied_furniture != entt::null);
+
+        if (!skip_hunger_decay) {
+            needs.hunger -= 0.045f;
+        }
+        if (!skip_fatigue_decay) {
+            needs.fatigue -= 0.025f;
         }
 
         if (needs.hunger < 0.0f) needs.hunger = 0.0f;
@@ -1487,16 +1522,27 @@ void SystemSurvivalOverride(entt::registry& reg, int current_tick, MundusVivens:
                         }
                     });
 
-                    if (target_furn != entt::null) {
+                    if (target_furn != entt::null && min_dist < 50.0f) {
                         job.target_location = found_loc;
                         job.target_x = found_x;
                         job.target_y = found_y;
                         job.target_z = found_z;
                     } else {
-                        job.target_location = "술집 (Tavern)";
-                        job.target_x = 30.0f;
-                        job.target_y = 0.0f;
-                        job.target_z = 40.0f;
+                        // 황무지 야영: 임시 모닥불 엔티티 동적 생성
+                        entt::entity camp_ent = reg.create();
+                        reg.emplace<IdentityComp>(camp_ent, 0u, "임시 모닥불");
+                        reg.emplace<LocationComp>(camp_ent, loc.zone_id, loc.location_name, loc.x, loc.y, loc.z);
+                        reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Eat, entt::null);
+                        
+                        grid.Insert(camp_ent, loc.zone_id);
+                        
+                        target_furn = camp_ent;
+                        job.target_location = loc.location_name;
+                        job.target_x = loc.x;
+                        job.target_y = loc.y;
+                        job.target_z = loc.z;
+                        std::cout << "🔥 [야영 개시] " << identity.display_name << "이(가) 황무지 현위치에 [" 
+                                  << reg.get<IdentityComp>(camp_ent).display_name << "]을 피우고 식사 준비를 합니다." << std::endl;
                     }
                 } else {
                     job.job_id = 999001; // 로컬 피로 해결 가상 Job ID
@@ -1527,18 +1573,27 @@ void SystemSurvivalOverride(entt::registry& reg, int current_tick, MundusVivens:
                         }
                     });
 
-                    if (target_furn != entt::null) {
+                    if (target_furn != entt::null && min_dist < 50.0f) {
                         job.target_location = found_loc;
                         job.target_x = found_x;
                         job.target_y = found_y;
                         job.target_z = found_z;
                     } else {
-                        float home_x = 0.0f, home_z = 0.0f;
-                        std::string home_loc = GetAgentHomeLocation(npc_id, home_x, home_z);
-                        job.target_location = home_loc;
-                        job.target_x = home_x;
-                        job.target_y = 0.0f;
-                        job.target_z = home_z;
+                        // 황무지 야영: 임시 야영지 엔티티 동적 생성
+                        entt::entity camp_ent = reg.create();
+                        reg.emplace<IdentityComp>(camp_ent, 0u, "임시 야영지");
+                        reg.emplace<LocationComp>(camp_ent, loc.zone_id, loc.location_name, loc.x, loc.y, loc.z);
+                        reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Sleep, entt::null);
+                        
+                        grid.Insert(camp_ent, loc.zone_id);
+                        
+                        target_furn = camp_ent;
+                        job.target_location = loc.location_name;
+                        job.target_x = loc.x;
+                        job.target_y = loc.y;
+                        job.target_z = loc.z;
+                        std::cout << "⛺ [야영 개시] " << identity.display_name << "이(가) 황무지 현위치에 [" 
+                                  << reg.get<IdentityComp>(camp_ent).display_name << "]를 구축하고 잠을 청합니다." << std::endl;
                     }
                 }
                 job.is_active = true;
@@ -1565,28 +1620,83 @@ void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int cu
         }
     });
 
-    // 2. 생체 욕구를 해결하고 있는 NPC들의 상태 조율
+    // 2. 생체 욕구를 해결하고 있는 NPC들의 상태 조율 (생존 위기 혹은 일반 계획 수면/식사)
     auto npc_view = reg.view<NeedsComp, LocationComp, ToilComp, JobComp, IdentityComp>();
     npc_view.each([&](entt::entity npc_entity, NeedsComp& needs, LocationComp& loc, ToilComp& toil, JobComp& job, IdentityComp& identity) {
-        if (needs.is_resolving_survival) {
-            // 목적 거점에 정상 도착했는지 검증
-            if (loc.location_name == job.target_location) {
-                // 아직 사물을 점유하지 않은 상태라면, 주변 가구 탐색 및 획득 시도
+        // 🆕 계획 수면/식사 여부 판별
+        bool is_scheduled_sleep = false;
+        bool is_scheduled_eat = false;
+        if (job.is_active && toil.state == ToilState::Working) {
+            std::string intent = job.intent;
+            if (intent.find("Sleep") != std::string::npos || intent.find("sleep") != std::string::npos ||
+                intent.find("잠") != std::string::npos || intent.find("수면") != std::string::npos ||
+                intent.find("취침") != std::string::npos || intent.find("휴식") != std::string::npos || 
+                intent.find("rest") != std::string::npos) {
+                is_scheduled_sleep = true;
+            } else if (intent.find("Eat") != std::string::npos || intent.find("eat") != std::string::npos ||
+                       intent.find("밥") != std::string::npos || intent.find("식사") != std::string::npos ||
+                       intent.find("음식") != std::string::npos || intent.find("먹기") != std::string::npos ||
+                       intent.find("취식") != std::string::npos) {
+                is_scheduled_eat = true;
+            }
+        }
+
+        // 🆕 일반 계획 완료/취소/교체 시 점유 중인 가구 자동 반납 및 철거
+        if (!needs.is_resolving_survival && needs.occupied_furniture != entt::null) {
+            bool keep_furniture = false;
+            if (job.is_active && toil.state == ToilState::Working) {
+                if (is_scheduled_sleep) {
+                    if (reg.valid(needs.occupied_furniture)) {
+                        auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
+                        if (aff.type == AffordanceType::Sleep || aff.type == AffordanceType::Sit) {
+                            keep_furniture = true;
+                        }
+                    }
+                } else if (is_scheduled_eat) {
+                    if (reg.valid(needs.occupied_furniture)) {
+                        auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
+                        if (aff.type == AffordanceType::Eat || aff.type == AffordanceType::Drink || aff.type == AffordanceType::Sit) {
+                            keep_furniture = true;
+                        }
+                    }
+                }
+            }
+            if (!keep_furniture) {
+                if (reg.valid(needs.occupied_furniture)) {
+                    auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
+                    aff.occupied_by = entt::null;
+                    if (reg.all_of<IdentityComp>(needs.occupied_furniture)) {
+                        const auto& id = reg.get<IdentityComp>(needs.occupied_furniture);
+                        if (id.display_name.find("임시") != std::string::npos) {
+                            entt::entity temp_furn = needs.occupied_furniture;
+                            grid.Remove(temp_furn, reg.get<LocationComp>(temp_furn).zone_id);
+                            reg.destroy(temp_furn);
+                            std::cout << "🔥 [야영 철거] 사용이 끝난 [" << id.display_name << "]을(를) 완전히 철거했습니다." << std::endl;
+                        }
+                    }
+                }
+                needs.occupied_furniture = entt::null;
+            }
+        }
+
+        // 수면 또는 식사를 수행해야 하는 경우 (생존 위기 혹은 일반 계획 스케줄)
+        bool needs_action = needs.is_resolving_survival || is_scheduled_sleep || is_scheduled_eat;
+        if (needs_action) {
+            // 목적지에 이미 머무르고 있는 상태이고, 작업 중인 상태
+            bool at_destination = (loc.location_name == job.target_location);
+            if (at_destination) {
+                // 가구 점유 시도
                 if (needs.occupied_furniture == entt::null) {
                     entt::entity target_furn = entt::null;
-                    
-                    // 같은 거점 내에 배치된 빈 가구를 스캔
                     auto furn_view_inner = reg.view<AffordanceComp, LocationComp, IdentityComp>();
                     furn_view_inner.each([&](entt::entity furn_ent, AffordanceComp& aff, LocationComp& furn_loc, IdentityComp& furn_id) {
-                        // 🆕 첫 번째 빈 가구를 획득하면 스캔 루프 Early Exit (break 유사 처리)
                         if (target_furn != entt::null) return;
-
                         if (furn_loc.zone_id == loc.zone_id && aff.occupied_by == entt::null) {
-                            if (needs.current_survival_type == "hunger") {
+                            if (needs.current_survival_type == "hunger" || is_scheduled_eat) {
                                 if (aff.type == AffordanceType::Eat || aff.type == AffordanceType::Drink || aff.type == AffordanceType::Sit) {
                                     target_furn = furn_ent;
                                 }
-                            } else if (needs.current_survival_type == "fatigue") {
+                            } else if (needs.current_survival_type == "fatigue" || is_scheduled_sleep) {
                                 if (aff.type == AffordanceType::Sleep || aff.type == AffordanceType::Sit) {
                                     target_furn = furn_ent;
                                 }
@@ -1594,103 +1704,150 @@ void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int cu
                         }
                     });
 
+                    // 황무지이고 주변에 가구가 없으면 야영지/모닥불 스폰
+                    if (target_furn == entt::null && (loc.location_name == "Wilderness" || loc.location_name == "황무지")) {
+                        entt::entity camp_ent = reg.create();
+                        if (needs.current_survival_type == "hunger" || is_scheduled_eat) {
+                            reg.emplace<IdentityComp>(camp_ent, 0u, "임시 모닥불");
+                            reg.emplace<LocationComp>(camp_ent, loc.zone_id, loc.location_name, loc.x, loc.y, loc.z);
+                            reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Eat, entt::null);
+                            std::cout << "🔥 [야영 개시] " << identity.display_name << "이(가) 황무지 현위치에 [임시 모닥불]을 피우고 식사 준비를 합니다." << std::endl;
+                        } else {
+                            reg.emplace<IdentityComp>(camp_ent, 0u, "임시 야영지");
+                            reg.emplace<LocationComp>(camp_ent, loc.zone_id, loc.location_name, loc.x, loc.y, loc.z);
+                            reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Sleep, entt::null);
+                            std::cout << "⛺ [야영 개시] " << identity.display_name << "이(가) 황무지 현위치에 [임시 야영지]를 구축하고 잠을 청합니다." << std::endl;
+                        }
+                        grid.Insert(camp_ent, loc.zone_id);
+                        target_furn = camp_ent;
+                    }
+
                     if (target_furn != entt::null) {
-                        // 가구 락 점유
                         auto& target_aff = reg.get<AffordanceComp>(target_furn);
                         target_aff.occupied_by = npc_entity;
                         needs.occupied_furniture = target_furn;
 
-                        // 가구 좌표로 Snap (정합성 동기화)
                         const auto& furn_loc = reg.get<LocationComp>(target_furn);
                         loc.x = furn_loc.x;
                         loc.y = furn_loc.y;
                         loc.z = furn_loc.z;
 
-                        // 상호작용 Toil 상태 강제 개시
-                        toil.state = ToilState::Working;
-                        toil.duration_ticks = 9999; // 만족할 때까지 연장
-                        
-                        if (needs.current_survival_type == "hunger") {
+                        // 상호작용 Toil 설정 (일반 스케줄의 경우 toil.duration_ticks는 C# 스케줄을 따름)
+                        if (needs.is_resolving_survival) {
+                            toil.state = ToilState::Working;
+                            toil.duration_ticks = 9999;
+                        }
+
+                        auto& act = reg.get<ActivityComp>(npc_entity);
+                        if (needs.current_survival_type == "hunger" || is_scheduled_eat) {
                             toil.current_action = "Eating";
-                            auto& act = reg.get<ActivityComp>(npc_entity);
-                            act.current_activity = "식탁에 앉아 식사 중";
+                            act.current_activity = (reg.get<IdentityComp>(target_furn).display_name.find("임시") != std::string::npos) ? "황무지 야영지에서 식사 중" : "식탁에 앉아 식사 중";
                             std::cout << "🍽️ [가구 상호작용] " << identity.display_name << "이(가) [" 
                                       << reg.get<IdentityComp>(target_furn).display_name << "]를 사용하여 식사를 시작합니다." << std::endl;
                         } else {
                             toil.current_action = "Sleeping";
-                            auto& act = reg.get<ActivityComp>(npc_entity);
-                            act.current_activity = "침대에서 숙면 중";
+                            act.current_activity = (reg.get<IdentityComp>(target_furn).display_name.find("임시") != std::string::npos) ? "황무지 야영지에서 숙면 중" : "침대에서 숙면 중";
                             std::cout << "💤 [가구 상호작용] " << identity.display_name << "이(가) [" 
                                       << reg.get<IdentityComp>(target_furn).display_name << "]를 사용하여 숙면에 들어갑니다." << std::endl;
                         }
                     } else {
-                        // 만약 빈 가구가 전원 만석이라면, 바닥에서 해결하도록 Fallback
-                        toil.state = ToilState::Working;
-                        toil.duration_ticks = 9999;
-                        
-                        if (needs.current_survival_type == "hunger") {
+                        // 가구가 없고 황무지도 아닌 경우 맨바닥 노숙
+                        if (needs.is_resolving_survival) {
+                            toil.state = ToilState::Working;
+                            toil.duration_ticks = 9999;
+                        }
+                        auto& act = reg.get<ActivityComp>(npc_entity);
+                        if (needs.current_survival_type == "hunger" || is_scheduled_eat) {
                             toil.current_action = "Eating_On_Floor";
-                            auto& act = reg.get<ActivityComp>(npc_entity);
                             act.current_activity = "자리가 부족해 바닥에서 식사 중";
                             std::cout << "🥪 [바닥 취식] " << identity.display_name << "이(가) 빈 의자가 없어 바닥에서 식사합니다." << std::endl;
                         } else {
                             toil.current_action = "Sleeping_On_Floor";
-                            auto& act = reg.get<ActivityComp>(npc_entity);
                             act.current_activity = "자리가 부족해 구석에서 선잠 중";
                             std::cout << "⛺ [노숙 취침] " << identity.display_name << "이(가) 빈 침대가 없어 길가에서 잠을 청합니다." << std::endl;
                         }
                     }
                 }
 
-                // 점유 중일 경우 매 물리 틱마다 수치 회복 (가구 이용 시 더 빠른 충전)
-                bool is_using_furniture = (needs.occupied_furniture != entt::null);
-                if (needs.current_survival_type == "hunger") {
-                    needs.hunger += is_using_furniture ? 0.3f : 0.1f;
-                } else if (needs.current_survival_type == "fatigue") {
-                    needs.fatigue += is_using_furniture ? 0.4f : 0.15f;
+                // 점유 상태 또는 맨바닥 회복 진행
+                float recovery = 0.0f;
+                bool is_eating = (needs.current_survival_type == "hunger" || is_scheduled_eat);
+                bool is_sleeping = (needs.current_survival_type == "fatigue" || is_scheduled_sleep);
+
+                if (needs.occupied_furniture != entt::null) {
+                    auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
+                    auto& id_comp = reg.get<IdentityComp>(needs.occupied_furniture);
+                    bool is_temp = (id_comp.display_name.find("임시") != std::string::npos);
+
+                    if (is_eating) {
+                        recovery = is_temp ? 0.25f : 0.5f; // 임시 모닥불(2시간) vs 식탁(1시간)
+                    } else if (is_sleeping) {
+                        if (is_temp) recovery = 0.0625f; // 임시 야영지(8시간)
+                        else if (aff.type == AffordanceType::Sit) recovery = 0.083f; // 의자(6시간)
+                        else recovery = 0.125f; // 침대(4시간)
+                    }
+                } else {
+                    // 맨바닥
+                    if (is_eating) recovery = 0.125f; // 맨바닥 식사 (4시간)
+                    else if (is_sleeping) recovery = 0.025f; // 맨바닥 취침 (16시간)
                 }
 
-                if (needs.hunger > 100.0f) needs.hunger = 100.0f;
-                if (needs.fatigue > 100.0f) needs.fatigue = 100.0f;
-
-                // 🆕 생체 욕구 해결 완료 검사 (양측 결합 조건 대신 현재 해결 중인 유형 단독 검사)
-                bool resolved = false;
-                if (needs.current_survival_type == "hunger" && needs.hunger >= 95.0f) {
-                    resolved = true;
-                } else if (needs.current_survival_type == "fatigue" && needs.fatigue >= 95.0f) {
-                    resolved = true;
+                if (is_eating) {
+                    needs.hunger += recovery;
+                    if (needs.hunger > 100.0f) needs.hunger = 100.0f;
+                }
+                if (is_sleeping) {
+                    needs.fatigue += recovery;
+                    if (needs.fatigue > 100.0f) needs.fatigue = 100.0f;
                 }
 
-                if (resolved) {
-                    std::cout << "🔋 [생체 충전 완료] " << identity.display_name << "의 생존 위기 해결! (" 
-                              << needs.current_survival_type << " 완료, 허기: " << needs.hunger << ", 피로: " << needs.fatigue << ")" << std::endl;
-
-                    // 점유 해제
-                    if (needs.occupied_furniture != entt::null) {
-                        auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
-                        aff.occupied_by = entt::null;
-                        needs.occupied_furniture = entt::null;
+                // 생체 위기 종료 검사 (일반 스케줄은 C# 스케줄 변경에 의해서 자동으로 끝남)
+                if (needs.is_resolving_survival) {
+                    bool resolved = false;
+                    if (needs.current_survival_type == "hunger" && needs.hunger >= 95.0f) {
+                        resolved = true;
+                    } else if (needs.current_survival_type == "fatigue" && needs.fatigue >= 95.0f) {
+                        resolved = true;
                     }
 
-                    needs.is_resolving_survival = false;
-                    needs.current_survival_type = "";
+                    if (resolved) {
+                        std::cout << "🔋 [생체 충전 완료] " << identity.display_name << "의 생존 위기 해결! (" 
+                                  << needs.current_survival_type << " 완료, 허기: " << needs.hunger << ", 피로: " << needs.fatigue << ")" << std::endl;
 
-                    // C# 대뇌에 해결 상태 보고 ➔ C#이 락을 해제하고 즉시 원래 틱의 새 스케줄 교부
-                    uint32_t npc_id = identity.npc_id;
-                    uint64_t job_id = job.job_id;
-                    client.ReportJobStatusAsync(npc_id, job_id, 0, mundusvivens::UNKNOWN_REASON, "survival_resolved", current_tick,
-                        MundusVivens::AsyncGrpcClient::ReportJobStatusCallback([](bool success, bool has_new_job, const MundusVivens::MundusVivensClient::JobPayload& new_job, const std::string& message) {
-                            // 대뇌 복귀 확인 로그 생략
-                        }));
+                        // 점유 해제 및 임시 야영지 철거
+                        if (needs.occupied_furniture != entt::null) {
+                            auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
+                            aff.occupied_by = entt::null;
+                            if (reg.all_of<IdentityComp>(needs.occupied_furniture)) {
+                                const auto& id = reg.get<IdentityComp>(needs.occupied_furniture);
+                                if (id.display_name.find("임시") != std::string::npos) {
+                                    entt::entity temp_furn = needs.occupied_furniture;
+                                    grid.Remove(temp_furn, reg.get<LocationComp>(temp_furn).zone_id);
+                                    reg.destroy(temp_furn);
+                                    std::cout << "🔥 [야영 철거] 사용이 끝난 [" << id.display_name << "]을(를) 완전히 철거했습니다." << std::endl;
+                                }
+                            }
+                            needs.occupied_furniture = entt::null;
+                        }
 
-                    // Job 상태 및 마이크로 Toil 상태 리셋
-                    job.is_active = false;
-                    toil.state = ToilState::Idle;
-                    toil.duration_ticks = 0;
-                    toil.current_action = "";
-                    
-                    auto& act = reg.get<ActivityComp>(npc_entity);
-                    act.current_activity = "대기";
+                        needs.is_resolving_survival = false;
+                        needs.current_survival_type = "";
+
+                        // C# 대뇌에 해결 상태 보고
+                        uint32_t npc_id = identity.npc_id;
+                        uint64_t job_id = job.job_id;
+                        client.ReportJobStatusAsync(npc_id, job_id, 0, mundusvivens::UNKNOWN_REASON, "survival_resolved", current_tick,
+                            MundusVivens::AsyncGrpcClient::ReportJobStatusCallback([](bool success, bool has_new_job, const MundusVivens::MundusVivensClient::JobPayload& new_job, const std::string& message) {
+                            }));
+
+                        // Toil 상태 리셋
+                        job.is_active = false;
+                        toil.state = ToilState::Idle;
+                        toil.duration_ticks = 0;
+                        toil.current_action = "";
+                        auto& act = reg.get<ActivityComp>(npc_entity);
+                        act.current_activity = "대기";
+                    }
                 }
             }
         }
