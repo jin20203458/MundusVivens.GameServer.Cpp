@@ -1,6 +1,6 @@
-# C++ Game Server Build Rules
-- **Run from repository root only**
-- **No raw CMake commands from terminal**
+# C++ Game Server Rules
+- **Execution**: Run from repository root only. No raw `cmake` commands from terminal.
 - **Build**: `powershell -ExecutionPolicy Bypass -File .\build_local.ps1`
 - **Clean Build (Keep vcpkg)**: `powershell -ExecutionPolicy Bypass -File .\build_local.ps1 -Clean`
-- **Obsidian.Agent**: `../Obsidian.Agent/`
+- **Paths**: Use relative paths only (e.g., `../Obsidian.Agent/`).
+- **SSOT Docs**: Update specs in `../MundusVivens/docs/` synchronously with any code changes.
