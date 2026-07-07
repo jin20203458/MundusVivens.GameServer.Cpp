@@ -78,7 +78,13 @@ add_executable(MundusVivensGameServer
     GridMap.h
     GridMap.cpp
     Systems.h
-    Systems.cpp
+    SystemSocial.cpp
+    SystemSurvival.cpp
+    SystemMovement.cpp
+    SystemNetwork.cpp
+    SystemPlayer.cpp
+    SystemAmbient.cpp
+    SystemJobDriver.cpp
     GameLoop.h
     GameLoop.cpp
     AsyncGrpcClient.h
