@@ -10,16 +10,19 @@
 
 // 1. 감정 쇠퇴 및 감정 전염 처리 시스템
 void SystemEmotionDecay(entt::registry& reg) {
+    if (!reg.ctx().contains<EmotionRegistry>()) return;
+    const auto& emo_reg = reg.ctx().get<EmotionRegistry>();
+
     // 감정 전염 : 각 zone 별 부정적 감정 NPC가 있는지 먼저 스캔
-    std::unordered_map<uint32_t, std::vector<std::string>> zone_negative_emotions; // zone_id -> 부정적 감정 목록
+    std::unordered_map<uint32_t, std::vector<uint8_t>> zone_negative_emotions; // zone_id -> 부정적 감정 ID 목록
     
     auto zone_view = reg.view<LocationComp, EmotionComp>();
     zone_view.each([&](LocationComp& loc, EmotionComp& emo) {
-        std::string cur_emo = emo.current_emotion;
-        if (cur_emo.find("분노") != std::string::npos || 
-            cur_emo.find("적대") != std::string::npos || 
-            cur_emo.find("공포") != std::string::npos) {
-            zone_negative_emotions[loc.zone_id].push_back(cur_emo);
+        if (emo.current_emotion_id < emo_reg.category_table.size()) {
+            EmotionCategory cat = emo_reg.category_table[emo.current_emotion_id];
+            if (cat != EmotionCategory::Neutral) {
+                zone_negative_emotions[loc.zone_id].push_back(emo.current_emotion_id);
+            }
         }
     });
 
@@ -34,13 +37,12 @@ void SystemEmotionDecay(entt::registry& reg) {
         if (emo.decay_ticks_remaining > 0) {
             emo.decay_ticks_remaining--;
             if (emo.decay_ticks_remaining == 0) {
-                std::string old_emo = emo.current_emotion;
-                std::string base_emo = emo.base_emotion;
-                if (old_emo != base_emo) {
-                    emo.current_emotion = base_emo;
+                if (emo.current_emotion_id != emo.base_emotion_id) {
+                    std::string old_emo = emo.current_emotion;
+                    emo.current_emotion = emo.base_emotion;
                     emo.current_emotion_id = emo.base_emotion_id; // 정수 ID 동기화
                     std::cout << "🎭 [감정 쇠퇴] " << identity.display_name << "의 감정이 오래되어 기본 감정 [" 
-                              << base_emo << "](으)로 자동 복귀되었습니다. (이전 감정: " << old_emo << ")" << std::endl;
+                              << emo.base_emotion << "](으)로 자동 복귀되었습니다. (이전 감정: " << old_emo << ")" << std::endl;
                 }
             }
         }
@@ -50,33 +52,70 @@ void SystemEmotionDecay(entt::registry& reg) {
             uint32_t zone_id = loc_comp->zone_id;
             auto it_neg = zone_negative_emotions.find(zone_id);
             if (it_neg != zone_negative_emotions.end() && !it_neg->second.empty()) {
-                // 이미 평온한 상태인 경우에만 감정 전염
-                if (emo.current_emotion == emo.base_emotion && 
-                    emo.current_emotion != "불안" && emo.current_emotion != "경계") {
+                // "불안" 및 "경계" ID 최초 1회 캐싱
+                static uint8_t anxiety_id = 255;
+                static uint8_t alert_id = 255;
+                static bool ids_cached = false;
+
+                if (!ids_cached) {
+                    auto& non_const_reg = const_cast<EmotionRegistry&>(emo_reg);
+                    
+                    auto it_anxiety = non_const_reg.name_to_id.find("불안");
+                    if (it_anxiety == non_const_reg.name_to_id.end()) {
+                        anxiety_id = static_cast<uint8_t>(non_const_reg.decay_ticks_table.size());
+                        non_const_reg.name_to_id["불안"] = anxiety_id;
+                        non_const_reg.decay_ticks_table.push_back(5);
+                        non_const_reg.category_table.push_back(EmotionCategory::Neutral);
+                    } else {
+                        anxiety_id = it_anxiety->second;
+                    }
+                    
+                    auto it_alert = non_const_reg.name_to_id.find("경계");
+                    if (it_alert == non_const_reg.name_to_id.end()) {
+                        alert_id = static_cast<uint8_t>(non_const_reg.decay_ticks_table.size());
+                        non_const_reg.name_to_id["경계"] = alert_id;
+                        non_const_reg.decay_ticks_table.push_back(5);
+                        non_const_reg.category_table.push_back(EmotionCategory::Neutral);
+                    } else {
+                        alert_id = it_alert->second;
+                    }
+                    ids_cached = true;
+                }
+
+                // 이미 평온한 상태인 경우에만 감정 전염 (정수 ID 기반 판단)
+                if (emo.current_emotion_id == emo.base_emotion_id && 
+                    emo.current_emotion_id != anxiety_id && 
+                    emo.current_emotion_id != alert_id) {
                     
                     // 마주친 부정 감정의 수 비례 확률 (개당 15%, 최대 45%)
                     float infect_chance = it_neg->second.size() * 0.15f;
                     if (infect_chance > 0.45f) infect_chance = 0.45f;
 
                     if (contagion_dis(contagion_gen) < infect_chance) {
-                        std::string source_emo = it_neg->second[0];
-                        std::string target_emo = "불안";
-                        if (source_emo.find("적대") != std::string::npos) target_emo = "경계";
+                        uint8_t source_emo_id = it_neg->second[0];
+                        EmotionCategory source_cat = EmotionCategory::Neutral;
+                        if (source_emo_id < emo_reg.category_table.size()) {
+                            source_cat = emo_reg.category_table[source_emo_id];
+                        }
+
+                        uint8_t target_emo_id = (source_cat == EmotionCategory::Hostility) ? alert_id : anxiety_id;
+                        std::string target_emo = (source_cat == EmotionCategory::Hostility) ? "경계" : "불안";
 
                         emo.current_emotion = target_emo;
+                        emo.current_emotion_id = target_emo_id;
+                        emo.decay_ticks_remaining = 5; // 5틱 동안 지속 후 자동 쇠퇴
 
-                        // 감정 전염 시 정수 ID 도 동적 매핑
-                        if (reg.ctx().contains<EmotionRegistry>()) {
-                            const auto& registry = reg.ctx().get<EmotionRegistry>();
-                            auto it_emo = registry.name_to_id.find(target_emo);
-                            if (it_emo != registry.name_to_id.end()) {
-                                emo.current_emotion_id = it_emo->second;
+                        // 소스 감정 이름 조회 (로그용)
+                        std::string source_emo_name = "부정적 감정";
+                        for (const auto& pair : emo_reg.name_to_id) {
+                            if (pair.second == source_emo_id) {
+                                source_emo_name = pair.first;
+                                break;
                             }
                         }
 
-                        emo.decay_ticks_remaining = 5; // 5틱 동안 지속 후 자동 쇠퇴
                         std::cout << "⚡ [감정 전염] " << identity.display_name << "이(가) 같은 구역 내 부정적 감정 [" 
-                                  << source_emo << "]의 영향을 받아 [" << target_emo << "] 상태가 되었습니다!" << std::endl;
+                                  << source_emo_name << "]의 영향을 받아 [" << target_emo << "] 상태가 되었습니다!" << std::endl;
                     }
                 }
             }
@@ -463,6 +502,14 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                                     uint8_t next_id = static_cast<uint8_t>(emo_reg.decay_ticks_table.size());
                                                     emo_reg.name_to_id[em_update.new_emotion] = next_id;
                                                     emo_reg.decay_ticks_table.push_back(decay_ticks);
+                                                    
+                                                    // 딱 한 번만 문자열 find 검사하여 카테고리 설정
+                                                    EmotionCategory cat = EmotionCategory::Neutral;
+                                                    if (em_update.new_emotion.find("분노") != std::string::npos) cat = EmotionCategory::Anger;
+                                                    else if (em_update.new_emotion.find("적대") != std::string::npos) cat = EmotionCategory::Hostility;
+                                                    else if (em_update.new_emotion.find("공포") != std::string::npos) cat = EmotionCategory::Fear;
+                                                    emo_reg.category_table.push_back(cat);
+                                                    
                                                     emo.current_emotion_id = next_id;
                                                 } else {
                                                     emo.current_emotion_id = it_emo->second;

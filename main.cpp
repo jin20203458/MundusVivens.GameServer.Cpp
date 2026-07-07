@@ -100,12 +100,12 @@ int main() {
     auto io_work_guard = boost::asio::make_work_guard(io);
     std::thread io_thread([&io]() { io.run(); });
 
-    // 2. gRPC 채널 생성 (동기/비동기 클라이언트가 공유 - Task D)
+    // 2. gRPC 채널 생성 (동기/비동기 클라이언트가 공유)
     const std::string server_address = "localhost:5001";
     std::cout << "[C++ 서버] " << server_address << " 포트의 C# AI gRPC 서버로 연결 시도 중..." << std::endl;
     auto channel = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
 
-    // 3. agrpc 컨텍스트 생성 (gRPC CompletionQueue 래핑 - Task E)
+    // 3. agrpc 컨텍스트 생성 (gRPC CompletionQueue 래핑)
     agrpc::GrpcContext grpc_ctx{std::make_unique<grpc::CompletionQueue>()};
     auto grpc_work_guard = boost::asio::make_work_guard(grpc_ctx);
 
@@ -114,10 +114,8 @@ int main() {
     MundusVivens::AsyncGrpcClient async_client(channel, grpc_ctx);
     std::cout << "[C++ 서버] gRPC 통신 채널 및 리액터가 성공적으로 초기화되었습니다." << std::endl;
 
-    // 5. gRPC 전용 백그라운드 리액터 스레드 가동 (폴링 없이 네이티브 블로킹 대기 - Task E)
-    std::thread grpc_thread([&]() {
-        grpc_ctx.run(); // Completion Queue 이벤트를 네이티브 블로킹으로 대기 (유휴 시 CPU 0% 점유)
-    });
+    // 5. gRPC 전용 백그라운드 스레드 가동 
+    std::thread grpc_thread([&grpc_ctx]() { grpc_ctx.run();  });
 
     // 6. TCP 서버 초기화 (포트 7777)
     TcpServer tcp_server(io, 7777);
@@ -141,10 +139,10 @@ int main() {
     GridMap grid_map;
     grid_map.LoadMap(bootstrap.locations);
 
-    // EntityIndex 등록 (O(1) 역방향 탐색용 싱글톤 리소스 - Task B)
+    // EntityIndex 등록  ( 역방향 탐색용 해쉬맵 싱글톤 )
     auto& entity_index = registry.ctx().emplace<EntityIndex>();
 
-    // 🆕 동적 ID 매핑 및 감정 레지스트리 컨텍스트 등록
+    //  동적 ID 매핑 및 감정 레지스트리 컨텍스트 등록
     auto& id_mapper = registry.ctx().emplace<AgentIdMapper>();
     auto& emotion_registry = registry.ctx().emplace<EmotionRegistry>();
 
@@ -160,6 +158,13 @@ int main() {
     for (const auto& [keyword, ticks] : base_rules) {
         emotion_registry.name_to_id[keyword] = next_emo_id;
         emotion_registry.decay_ticks_table.push_back(ticks);
+        
+        EmotionCategory cat = EmotionCategory::Neutral;
+        if (keyword == "분노") cat = EmotionCategory::Anger;
+        else if (keyword == "적대") cat = EmotionCategory::Hostility;
+        else if (keyword == "공포") cat = EmotionCategory::Fear;
+        emotion_registry.category_table.push_back(cat);
+        
         next_emo_id++;
     }
 
@@ -175,7 +180,7 @@ int main() {
         spatial_grid.GetOrCreateZoneId(loc.name);
     }
 
-    // 🆕 부트스트랩 가구(사물) 데이터 로드 및 엔티티 생성
+    //  부트스트랩 가구(사물) 데이터 로드 및 엔티티 생성
     std::cout << "[C++ 서버] " << bootstrap.furniture.size() << "개의 가구/사물 오브젝트 데이터를 동적 배치하는 중..." << std::endl;
     for (const auto& furn : bootstrap.furniture) {
         auto furn_entity = registry.create();
@@ -234,6 +239,13 @@ int main() {
         if (emotion_registry.name_to_id.find(agent.emotion) == emotion_registry.name_to_id.end()) {
             emotion_registry.name_to_id[agent.emotion] = next_emo_id;
             emotion_registry.decay_ticks_table.push_back(3); // 기본 3틱
+            
+            EmotionCategory cat = EmotionCategory::Neutral;
+            if (agent.emotion.find("분노") != std::string::npos) cat = EmotionCategory::Anger;
+            else if (agent.emotion.find("적대") != std::string::npos) cat = EmotionCategory::Hostility;
+            else if (agent.emotion.find("공포") != std::string::npos) cat = EmotionCategory::Fear;
+            emotion_registry.category_table.push_back(cat);
+            
             next_emo_id++;
         }
 

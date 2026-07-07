@@ -60,16 +60,20 @@ struct RelationshipDelta {
 
 struct InitialAgentState {
     uint32_t agent_id;
+    std::string string_id;
     std::string name;
+
     std::string location;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
+
+    // 심리 및 상태 정보
     std::string emotion;
     std::string activity;
     float extroversion = 0.5f;
+   
     std::vector<RelationshipSnapshot> relationships;
-    std::string string_id;
 };
 
 struct LocationData {
@@ -88,7 +92,7 @@ struct FurnitureData {
     float z = 0.0f;
 };
 
-// 🆕 월드 부트스트랩 데이터 구조체
+//  월드 부트스트랩 데이터 구조체
 struct WorldBootstrapData {
     std::vector<LocationData> locations;
     std::vector<InitialAgentState> agents;
@@ -106,7 +110,7 @@ struct AgentStatus {
     std::vector<std::string> memories;
 };
 
-// 🆕 배치 상태 업데이트용 구조체
+//  배치 상태 업데이트용 구조체
 struct AgentStatusUpdate {
     uint32_t agent_id;
     std::string location;
@@ -133,18 +137,17 @@ public:
 
 
 
-    // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
+    //  에이전트 상태 배치 업데이트 RPC 
     bool BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message);
 
     // C++ 게임 서버의 틱(시간 흐름) 진행을 C# AI 서버에 알립니다.
     bool ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<uint32_t>& out_busy_agent_ids);
 
-    // 🆕 월드 부트스트랩 데이터 조회
+    //  월드 부트스트랩 데이터 조회
     WorldBootstrapData GetWorldBootstrap();
 
 
 
-    // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
     using JobPayload = MundusVivens::JobPayload;
 
     std::vector<JobPayload> GetPendingJobs(int32_t current_tick);

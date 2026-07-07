@@ -163,15 +163,26 @@ struct EntityIndex {
     std::unordered_map<uint32_t, entt::entity>    by_session_index; // 세션 번호 -> entity
 };
 
-// 🆕 동적 에이전트 ID 맵퍼 구조체
+//  동적 에이전트 ID 맵퍼 구조체
 struct AgentIdMapper {
+	// (N:1): 여러 개의 별칭 문자열을 입력받아 하나의 C++ 정수 ID로 변환 eva -> 2, 에바 -> 2
     std::unordered_map<std::string, uint32_t> string_to_numeric;
+	// (1:1): 하나의 C++ 정수 ID를 입력받아 대표 문자열(string_id)을 반환 2 -> eva
     std::unordered_map<uint32_t, std::string> numeric_to_string;
 };
 
-// 🆕 고속 캐시 프렌들리 감정 레지스트리 구조체
+// 🆕 감정 성향 카테고리 열거형
+enum class EmotionCategory : uint8_t {
+    Neutral = 0,    // 평온 (전염성 없음)
+    Anger = 1,      // 분노 계열 ("분노", "분노함" 등)
+    Hostility = 2,  // 적대 계열 ("적대", "적대적" 등)
+    Fear = 3        // 공포 계열 ("공포", "두려움" 등)
+};
+
+//  고속 캐시 프렌들리 감정 레지스트리 구조체
 struct EmotionRegistry {
     std::unordered_map<std::string, uint8_t> name_to_id;
     std::vector<int32_t> decay_ticks_table; // 감정 ID -> 지속 틱수 (Flat Array, O(1))
+    std::vector<EmotionCategory> category_table; // 🆕 감정 ID -> 카테고리 (Flat Array, O(1))
 };
 
