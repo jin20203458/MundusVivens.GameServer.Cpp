@@ -93,7 +93,7 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map);
 
 void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick);
 
-float GetLocationSocialModifier(const std::string& location_name);
+float GetLocationSocialModifier(LocationType type);
 
 void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
@@ -114,5 +114,8 @@ void SystemBusyAmbient(entt::registry& reg, float deltaTime);
 void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
 void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
+
+// 🆕 행동 트리 실행 시스템
+void SystemBehaviorTree(entt::registry& reg);
 
 

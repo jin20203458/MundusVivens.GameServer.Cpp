@@ -78,6 +78,9 @@ add_executable(MundusVivensGameServer
     GridMap.h
     GridMap.cpp
     Systems.h
+    BTNode.h
+    BehaviorTrees.h
+    SystemBehaviorTree.cpp
     SystemSocial.cpp
     SystemSurvival.cpp
     SystemMovement.cpp

@@ -12,6 +12,11 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
         auto& job = reg.get_or_emplace<JobComp>(entity);
         auto& toil = reg.get_or_emplace<ToilComp>(entity);
 
+        // 🆕 만약 생체 위기 해결(로컬 BT) 중인 경우, 고차원 JobDriver 상태 머신은 중지
+        if (reg.all_of<NeedsComp>(entity) && reg.get<NeedsComp>(entity).is_resolving_survival) {
+            return;
+        }
+
         // NPC가 대화중이거나 바쁘면 Toil 상태를 Interrupted로 전환하고 대기
         if (reg.all_of<BusyTag>(entity)) {
             if (toil.state != ToilState::Interrupted) {
@@ -34,6 +39,7 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                                         j.intent = new_job.intent;
                                         j.target_agent_id = new_job.target_agent_id;
                                         j.priority = new_job.priority;
+                                        j.category = static_cast<JobCategory>(new_job.category);
                                         j.is_active = true;
                                         
                                         auto& t = inner_reg.get_or_emplace<ToilComp>(entity);

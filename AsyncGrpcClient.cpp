@@ -145,7 +145,8 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
                 result.emotion_updates.push_back(AgentEmotionUpdate{
                     proto_update.agent_id(),
                     proto_update.new_emotion(),
-                    static_cast<int>(proto_update.intensity())
+                    static_cast<int>(proto_update.intensity()),
+                    static_cast<uint8_t>(proto_update.category())
                 });
             }
             result.next_jobs.reserve(response.next_jobs_size());
@@ -161,6 +162,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
+                job.category = static_cast<uint8_t>(proto_job.category());
                 result.next_jobs.push_back(job);
             }
             on_complete(true, result);
@@ -345,6 +347,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoGetPendingJobs(int32_t current_t
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
+                job.category = static_cast<uint8_t>(proto_job.category());
                 jobs.push_back(job);
             }
             on_complete(true, jobs);
@@ -396,6 +399,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoReportJobStatus(uint32_t npc_id,
                 new_job.intent = proto_job.intent();
                 new_job.target_agent_id = proto_job.target_agent_id();
                 new_job.priority = proto_job.priority();
+                new_job.category = static_cast<uint8_t>(proto_job.category());
             }
             on_complete(response.success(), has_new, new_job, response.message());
         } else {

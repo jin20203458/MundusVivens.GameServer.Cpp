@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <entt/entt.hpp>
 #include "GridMap.h"
+#include "BTNode.h"
 
 // NPC 식별 정보 (NpcIds, NpcNames 대체)
 struct IdentityComp {
@@ -28,6 +29,12 @@ struct RelationshipCacheComp {
     std::unordered_map<uint32_t, RelationshipEntry> relationships; // 상대 NPC ID -> 관계 정보
 };
 
+enum class LocationType : uint8_t {
+    Unspecified = 0, Tavern, Market, Square,
+    Church, Wilderness, Residential, Forge, Manor,
+    Country, City, Place
+};
+
 // 위치 정보 (CurrentLocations 대체)
 struct LocationComp {
     uint32_t zone_id = 0;
@@ -35,6 +42,9 @@ struct LocationComp {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
+    LocationType type = LocationType::Unspecified;
+    uint32_t region_id = 0;
+    uint32_t territory_id = 0;
 };
 
 // 감정 상태 (CurrentEmotions, BaseEmotions, EmotionDecayTicks 통합)
@@ -75,6 +85,10 @@ struct PathfindingComp {
 };
 
 
+enum class JobCategory : uint8_t {
+    Unspecified = 0, Sleep, Eat, Social, Work, Travel, Survival
+};
+
 // Axis 2: Job 컴포넌트 (C# 대뇌가 할당한 고차원 의도)
 struct JobComp {
     uint64_t job_id = 0;
@@ -86,6 +100,7 @@ struct JobComp {
     uint32_t target_agent_id = 0;
     int32_t priority = 0;
     bool is_active = false;
+    JobCategory category = JobCategory::Unspecified;
 };
 
 // Axis 2: Toil 컴포넌트 (C++ 척수가 실행하는 마이크로 상태)
@@ -102,28 +117,34 @@ struct ToilComp {
     int32_t duration_ticks = 0;
 };
 
+enum class SurvivalType : uint8_t {
+    None = 0, Hunger, Fatigue
+};
+
 // 🆕 생체 욕구 컴포넌트
 struct NeedsComp {
     float hunger = 100.0f;
     float fatigue = 100.0f;
     bool is_resolving_survival = false;
-    std::string current_survival_type; // "hunger", "fatigue", 또는 ""
+    SurvivalType current_survival_type = SurvivalType::None;
     entt::entity occupied_furniture = entt::null; // 점유 중인 가구/사물 엔티티
 };
 
 // 🆕 사물 상호작용 종류
-enum class AffordanceType {
-    Sit,
-    Sleep,
-    Eat,
-    Drink,
-    Pray
+enum class AffordanceType : uint8_t {
+    Unspecified = 0,
+    Sit = 1,
+    Sleep = 2,
+    Eat = 3,
+    Drink = 4,
+    Pray = 5
 };
 
 // 🆕 사물 상호작용 컴포넌트
 struct AffordanceComp {
     AffordanceType type;
     entt::entity occupied_by = entt::null;
+    bool is_temporary = false;
 };
 
 // 네트워크 동기화 캐시 
@@ -184,5 +205,10 @@ struct EmotionRegistry {
     std::unordered_map<std::string, uint8_t> name_to_id;
     std::vector<int32_t> decay_ticks_table; // 감정 ID -> 지속 틱수 (Flat Array, O(1))
     std::vector<EmotionCategory> category_table; // 🆕 감정 ID -> 카테고리 (Flat Array, O(1))
+};
+
+// 🆕 행동 트리 컴포넌트
+struct BehaviorTreeComp {
+    std::unique_ptr<BT::BTNode> root_node;
 };
 

@@ -133,7 +133,7 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
     auto recovery_view = reg.view<CooldownComp, LocationComp>();
     recovery_view.each([tick](CooldownComp& cooldown, LocationComp& loc) {
         // Tavern/술집에 있으면 매 틱 1 회복. 일반 장소에서는 10틱에 1 회복
-        bool in_tavern = (loc.location_name.find("Tavern") != std::string::npos || loc.location_name.find("술집") != std::string::npos);
+        bool in_tavern = (loc.type == LocationType::Tavern);
         if (in_tavern) {
             if (cooldown.social_energy < cooldown.max_social_energy) {
                 cooldown.social_energy = std::min(cooldown.max_social_energy, cooldown.social_energy + 1);
@@ -176,8 +176,10 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
         std::shuffle(candidates.begin(), candidates.end(), gen);
 
         // 구역의 대표 장소 가중치 계산 (첫 번째 유효 엔티티의 위치 사용)
-        std::string zone_loc_name = reg.get<LocationComp>(candidates[0]).location_name;
-        float location_modifier = GetLocationSocialModifier(zone_loc_name);
+        const auto& candidate_loc = reg.get<LocationComp>(candidates[0]);
+        std::string zone_loc_name = candidate_loc.location_name;
+        LocationType zone_loc_type = candidate_loc.type;
+        float location_modifier = GetLocationSocialModifier(zone_loc_type);
 
         // 주도자(Initiator) 개별 판정
         for (entt::entity initiator : candidates) {
@@ -503,11 +505,11 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                                     emo_reg.name_to_id[em_update.new_emotion] = next_id;
                                                     emo_reg.decay_ticks_table.push_back(decay_ticks);
                                                     
-                                                    // 딱 한 번만 문자열 find 검사하여 카테고리 설정
+                                                    // 딱 한 번만 카테고리 설정
                                                     EmotionCategory cat = EmotionCategory::Neutral;
-                                                    if (em_update.new_emotion.find("분노") != std::string::npos) cat = EmotionCategory::Anger;
-                                                    else if (em_update.new_emotion.find("적대") != std::string::npos) cat = EmotionCategory::Hostility;
-                                                    else if (em_update.new_emotion.find("공포") != std::string::npos) cat = EmotionCategory::Fear;
+                                                    if (em_update.category > 0) {
+                                                        cat = static_cast<EmotionCategory>(em_update.category - 1);
+                                                    }
                                                     emo_reg.category_table.push_back(cat);
                                                     
                                                     emo.current_emotion_id = next_id;
@@ -538,6 +540,7 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                         job.intent = nj.intent;
                                         job.target_agent_id = nj.target_agent_id;
                                         job.priority = nj.priority;
+                                        job.category = static_cast<JobCategory>(nj.category);
                                         job.is_active = true;
 
                                         auto& toil = reg.get_or_emplace<ToilComp>(target_ent);
@@ -620,15 +623,12 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
 }
 
 // 장소별 사회적 맥락 가중치 반환 헬퍼
-float GetLocationSocialModifier(const std::string& location_name) {
-    if (location_name.find("Tavern") != std::string::npos || location_name.find("술집") != std::string::npos) {
-        return 1.8f;
-    } else if (location_name.find("Market") != std::string::npos || location_name.find("시장") != std::string::npos) {
-        return 1.5f;
-    } else if (location_name.find("Square") != std::string::npos || location_name.find("광장") != std::string::npos) {
-        return 1.2f;
-    } else if (location_name.find("Church") != std::string::npos || location_name.find("성당") != std::string::npos) {
-        return 0.3f;
+float GetLocationSocialModifier(LocationType type) {
+    switch (type) {
+        case LocationType::Tavern:  return 1.8f;
+        case LocationType::Market:  return 1.5f;
+        case LocationType::Square:  return 1.2f;
+        case LocationType::Church:  return 0.3f;
+        default:                    return 1.0f;
     }
-    return 1.0f;
 }

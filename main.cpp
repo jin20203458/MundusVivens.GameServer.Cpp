@@ -17,6 +17,7 @@
 #include "Components.h"
 #include "SpatialHashGrid.h"
 #include "Systems.h"
+#include "BehaviorTrees.h"
 #include "TcpServer.h"
 #include "GridMap.h"
 #include "ClientSession.h"
@@ -190,13 +191,9 @@ int main() {
         uint32_t zone_id = spatial_grid.GetOrCreateZoneId(furn.parent_location);
         registry.emplace<LocationComp>(furn_entity, zone_id, furn.parent_location, furn.x, furn.y, furn.z);
         
-        AffordanceType aff_type = AffordanceType::Sit;
-        if (furn.type == "Sleep") aff_type = AffordanceType::Sleep;
-        else if (furn.type == "Eat") aff_type = AffordanceType::Eat;
-        else if (furn.type == "Drink") aff_type = AffordanceType::Drink;
-        else if (furn.type == "Pray") aff_type = AffordanceType::Pray;
-        
-        registry.emplace<AffordanceComp>(furn_entity, aff_type, entt::null);
+        AffordanceType aff_type = static_cast<AffordanceType>(furn.type);
+        auto& aff = registry.emplace<AffordanceComp>(furn_entity, aff_type, entt::null);
+        aff.is_temporary = furn.is_temporary;
         
         // 가구를 SpatialGrid 공간에 등록
         spatial_grid.Insert(furn_entity, zone_id);
@@ -230,8 +227,18 @@ int main() {
         id_mapper.string_to_numeric[lower_name] = agent.agent_id;
 
         uint32_t zone_id = spatial_grid.GetOrCreateZoneId(agent.location);
-        registry.emplace<LocationComp>(entity, zone_id, agent.location, agent.x, agent.y, agent.z);
+        auto& loc_comp = registry.emplace<LocationComp>(entity, zone_id, agent.location, agent.x, agent.y, agent.z);
         spatial_grid.Insert(entity, zone_id);
+
+        // Find location info in bootstrap data to populate hierarchy/type
+        auto loc_it = std::find_if(bootstrap.locations.begin(), bootstrap.locations.end(), [&](const MundusVivens::LocationData& loc_data) {
+            return loc_data.name == agent.location;
+        });
+        if (loc_it != bootstrap.locations.end()) {
+            loc_comp.type = static_cast<LocationType>(loc_it->type);
+            loc_comp.region_id = loc_it->region_id;
+            loc_comp.territory_id = loc_it->territory_id;
+        }
 
         registry.emplace<ActivityComp>(entity, agent.activity);
 
@@ -271,6 +278,10 @@ int main() {
         needs.hunger = dist_needs(gen_needs);
         needs.fatigue = dist_needs(gen_needs);
 
+        // 🆕 행동 트리(BT) 컴포넌트 추가 및 초기화
+        auto& bt = registry.emplace<BehaviorTreeComp>(entity);
+        bt.root_node = BT::CreateSurvivalTree();
+
         registry.emplace<LastSyncedComp>(entity, agent.location, agent.emotion, agent.activity);
 
         // 🆕 성격 및 관계 데이터 초기 연동
@@ -297,6 +308,9 @@ int main() {
 
     int tick = 0; // 동기화 완료된 마지막 틱
     GrpcResultQueue grpc_queue;
+
+    // 🆕 행동 트리(BT) 실행을 위한 전역 컨텍스트 등록
+    registry.ctx().emplace<BT::BTContext>(&async_client, &grpc_queue, &spatial_grid, &tick);
 
     bool is_first_loop = true;
     bool is_tick_sync_pending = false;
@@ -379,6 +393,7 @@ int main() {
                                     job.intent = job_payload.intent;
                                     job.target_agent_id = job_payload.target_agent_id;
                                     job.priority = job_payload.priority;
+                                    job.category = static_cast<JobCategory>(job_payload.category);
                                     job.is_active = true;
 
                                     auto& toil = inner_reg.get_or_emplace<ToilComp>(target_ent);
@@ -411,6 +426,7 @@ int main() {
 
         // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동 (20Hz)
         SystemBusyAmbient(registry, 0.05f);
+        SystemBehaviorTree(registry); // 🆕 행동 트리(BT) 엔진 실행
         SystemSurvivalOverride(registry, spatial_grid, tick, async_client, grpc_queue); // 🆕 생체 위기 감지 및 인터럽트
         SystemPathfinding(registry, grid_map);
         SystemMovement(registry, spatial_grid, tick);

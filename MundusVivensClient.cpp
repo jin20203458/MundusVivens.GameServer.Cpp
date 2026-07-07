@@ -51,6 +51,7 @@ namespace MundusVivens {
                 update.agent_id = proto_update.agent_id();
                 update.new_emotion = proto_update.new_emotion();
                 update.intensity = static_cast<int>(proto_update.intensity());
+                update.category = static_cast<uint8_t>(proto_update.category());
                 result.emotion_updates.push_back(update);
             }
 
@@ -67,6 +68,7 @@ namespace MundusVivens {
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
+                job.category = static_cast<uint8_t>(proto_job.category());
                 result.next_jobs.push_back(job);
             }
 
@@ -217,6 +219,9 @@ namespace MundusVivens {
                 loc.x = proto_loc.position().x();
                 loc.y = proto_loc.position().y();
                 loc.z = proto_loc.position().z();
+                loc.type = static_cast<uint8_t>(proto_loc.type());
+                loc.region_id = proto_loc.region_id();
+                loc.territory_id = proto_loc.territory_id();
                 result.locations.push_back(loc);
             }
             for (int i = 0; i < response.agents_size(); ++i) {
@@ -246,11 +251,12 @@ namespace MundusVivens {
                 const auto& proto_furn = response.furniture(i);
                 FurnitureData furn;
                 furn.name = proto_furn.name();
-                furn.type = proto_furn.type();
+                furn.type = static_cast<uint8_t>(proto_furn.type());
                 furn.parent_location = proto_furn.parent_location();
                 furn.x = proto_furn.position().x();
                 furn.y = proto_furn.position().y();
                 furn.z = proto_furn.position().z();
+                furn.is_temporary = proto_furn.is_temporary();
                 result.furniture.push_back(furn);
             }
         }
@@ -285,6 +291,7 @@ namespace MundusVivens {
                 job.intent = proto_job.intent();
                 job.target_agent_id = proto_job.target_agent_id();
                 job.priority = proto_job.priority();
+                job.category = static_cast<uint8_t>(proto_job.category());
                 result.push_back(job);
             }
         } else {
@@ -319,6 +326,7 @@ namespace MundusVivens {
                 out_new_job.intent = proto_job.intent();
                 out_new_job.target_agent_id = proto_job.target_agent_id();
                 out_new_job.priority = proto_job.priority();
+                out_new_job.category = static_cast<uint8_t>(proto_job.category());
             }
             return true;
         } else {

@@ -18,6 +18,7 @@ struct AgentEmotionUpdate {
     uint32_t agent_id;
     std::string new_emotion;
     int intensity = 0;
+    uint8_t category = 0; // 🆕
 };
 
 struct JobPayload {
@@ -30,6 +31,7 @@ struct JobPayload {
     std::string intent;
     uint32_t target_agent_id = 0;
     int32_t priority = 0;
+    uint8_t category = 0; // 🆕
 };
 
 struct DialogueResult {
@@ -81,15 +83,19 @@ struct LocationData {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
+    uint8_t type = 0; // 🆕
+    uint32_t region_id = 0; // 🆕
+    uint32_t territory_id = 0; // 🆕
 };
 
 struct FurnitureData {
     std::string name;
-    std::string type;
+    uint8_t type = 0; // 🔄
     std::string parent_location;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
+    bool is_temporary = false; // 🆕
 };
 
 //  월드 부트스트랩 데이터 구조체
