@@ -26,6 +26,6 @@ Focus: 20Hz lock-free simulation main loop, EnTT ECS, and asynchronous networkin
 </context_triggers>
 
 <post_action>
-- **Log**: Document resolved bugs in `../Obsidian.Agent/troubleshooting/mundus_vivens.md`.
+- **Log**: Document resolved bugs in `../Obsidian.Agent/troubleshooting/mundus_vivens.md`. (Ignore simple refactors/optimizations)
 - **Sync**: Update specs in `../MundusVivens/docs/` if architecture changes.
 </post_action>
