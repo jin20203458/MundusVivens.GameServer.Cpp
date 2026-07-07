@@ -21,11 +21,11 @@ Focus: 20Hz lock-free simulation main loop, EnTT ECS, and asynchronous networkin
 </critical_rules>
 
 <context_triggers>
-- **Knowledge Base**: If modifying architecture, read `../MundusVivens/docs/01_architecture.md`.
+- **Knowledge Base**: If modifying architecture, read `../Obsidian.Agent/MundusVivens/docs/01_architecture.md`.
 - **Troubleshooting**: If debugging, read `../Obsidian.Agent/troubleshooting/mundus_vivens.md` before coding.
 </context_triggers>
 
 <post_action>
 - **Log**: Document resolved bugs in `../Obsidian.Agent/troubleshooting/mundus_vivens.md`. (Ignore simple refactors/optimizations)
-- **Sync**: Update specs in `../MundusVivens/docs/` if architecture changes.
+- **Sync**: Update specs in `../Obsidian.Agent/MundusVivens/docs/` if architecture changes.
 </post_action>
