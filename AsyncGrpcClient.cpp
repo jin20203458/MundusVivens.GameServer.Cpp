@@ -55,9 +55,9 @@ void AsyncGrpcClient::EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCal
         boost::asio::detached);
 }
 
-void AsyncGrpcClient::InjectBeliefAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, InjectBeliefCallback on_complete) {
+void AsyncGrpcClient::InjectBeliefAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, InjectBeliefCallback on_complete) {
     boost::asio::co_spawn(grpc_ctx_,
-        DoInjectBelief(target_agent_id, subject_id, std::move(content), belief_type, std::move(on_complete)),
+        DoInjectBelief(target_agent_id, subject_id, std::move(content), belief_type, source_agent_id, std::move(on_complete)),
         boost::asio::detached);
 }
 // -------------------------------------------------------------
@@ -125,10 +125,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
         DialogueResult result;
         if (status.ok()) {
             result.task_id = response.task_id();
-            result.is_queued = response.is_queued();
-            result.completed_immediately = response.completed_immediately();
             result.dialogue_summary = response.dialogue_summary();
-            result.is_completed = true;
             result.dialogue_lines.assign(response.dialogue_lines().begin(), response.dialogue_lines().end());
             result.structured_lines.reserve(response.structured_lines_size());
             for (int i = 0; i < response.structured_lines_size(); ++i) {
@@ -164,6 +161,10 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
                 job.priority = proto_job.priority();
                 job.category = static_cast<uint8_t>(proto_job.category());
                 result.next_jobs.push_back(job);
+            }
+            result.keywords.reserve(response.keywords_size());
+            for (int i = 0; i < response.keywords_size(); ++i) {
+                result.keywords.push_back(response.keywords(i));
             }
             on_complete(true, result);
         } else {
@@ -285,7 +286,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoEndPlayerDialogue(uint64_t sessi
     }
 }
 
-boost::asio::awaitable<void> AsyncGrpcClient::DoInjectBelief(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, InjectBeliefCallback on_complete) {
+boost::asio::awaitable<void> AsyncGrpcClient::DoInjectBelief(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, InjectBeliefCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncInjectBelief>;
         grpc::ClientContext context;
@@ -296,6 +297,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoInjectBelief(uint32_t target_age
         request.set_subject_id(subject_id);
         request.set_content(content);
         request.set_belief_type(belief_type);
+        request.set_source_agent_id(source_agent_id);
         mundusvivens::InjectBeliefResponse response;
 
         const grpc::Status status = co_await RPC::request(

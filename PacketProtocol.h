@@ -23,7 +23,6 @@ namespace PacketId {
     // 서버 → 클라이언트 (SC)
     constexpr uint16_t SC_LOGIN_ACK        = 0x1001;  // 로그인 응답 + 초기 맵 정보
     constexpr uint16_t SC_WORLD_SNAPSHOT   = 0x1002;  // 월드 NPC 상태 브로드캐스트
-    constexpr uint16_t SC_NPC_UPDATE       = 0x1003;  // 특정 NPC 상태 변경 알림
     constexpr uint16_t SC_DIALOGUE_EVENT   = 0x1004;  // NPC간 대화 이벤트 알림
     constexpr uint16_t SC_NPC_REPLY        = 0x1005;  // 플레이어에게 NPC 대사 전달
     constexpr uint16_t SC_HEARTBEAT_ACK    = 0x10FF;  // 하트비트 응답

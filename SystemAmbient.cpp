@@ -2,7 +2,7 @@
 #include "Components.h"
 #include <iostream>
 
-// 🆕 NPC 대기 중 상태 조율 시스템
+//  NPC 대기 중 상태 조율 시스템
 void SystemBusyAmbient(entt::registry& reg, float deltaTime) {
     auto view = reg.view<BusyTag, ActivityComp, ToilComp, VelocityComp, IdentityComp>();
     view.each([&](entt::entity entity, BusyTag& busy, ActivityComp& act, ToilComp& toil, VelocityComp& vel, IdentityComp& identity) {

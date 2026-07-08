@@ -25,8 +25,6 @@ namespace MundusVivens {
         DialogueResult result;
         if (status.ok()) {
             result.task_id = response.task_id();
-            result.is_queued = response.is_queued();
-            result.completed_immediately = response.completed_immediately();
             result.dialogue_summary = response.dialogue_summary();
 
             // protobuf가 뱉은 가변 배열(Repeated Field) 요소를 C++ std::vector에 순차적으로 밀어 넣음
@@ -34,7 +32,7 @@ namespace MundusVivens {
                 result.dialogue_lines.push_back(response.dialogue_lines(i));
             }
 
-            // 🆕 구조화된 대화 데이터 바인딩 추가
+            //  구조화된 대화 데이터 바인딩 추가
             for (int i = 0; i < response.structured_lines_size(); ++i) {
                 const auto& proto_line = response.structured_lines(i);
                 DialogueLine line;
@@ -44,7 +42,7 @@ namespace MundusVivens {
                 result.structured_lines.push_back(line);
             }
 
-            // 🆕 감정 업데이트 정보 바인딩
+            //  감정 업데이트 정보 바인딩
             for (int i = 0; i < response.emotion_updates_size(); ++i) {
                 const auto& proto_update = response.emotion_updates(i);
                 AgentEmotionUpdate update;
@@ -55,7 +53,7 @@ namespace MundusVivens {
                 result.emotion_updates.push_back(update);
             }
 
-            // 🆕 다음 행동 계획 바인딩
+            //  다음 행동 계획 바인딩
             for (int i = 0; i < response.next_jobs_size(); ++i) {
                 const auto& proto_job = response.next_jobs(i);
                 JobPayload job;
@@ -71,8 +69,10 @@ namespace MundusVivens {
                 job.category = static_cast<uint8_t>(proto_job.category());
                 result.next_jobs.push_back(job);
             }
-
-            result.is_completed = response.completed_immediately();
+            //  키워드 바인딩
+            for (int i = 0; i < response.keywords_size(); ++i) {
+                result.keywords.push_back(response.keywords(i));
+            }
         }
         else {
             std::cerr << "[대화 트리거 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
@@ -116,13 +116,14 @@ namespace MundusVivens {
         return result;
     }
 
-    bool MundusVivensClient::InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, std::string& out_message) {
+    bool MundusVivensClient::InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, std::string& out_message) {
         // 1. 믿음(소문)을 주입할 대상 NPC, 소문의 주인공, 내용 패킷 세팅
         mundusvivens::InjectBeliefRequest request;
         request.set_target_agent_id(target_agent_id);
         request.set_subject_id(subject_id);
         request.set_content(content);
         request.set_belief_type(belief_type);
+        request.set_source_agent_id(source_agent_id);
 
         mundusvivens::InjectBeliefResponse response;
         grpc::ClientContext context;

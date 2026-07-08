@@ -35,7 +35,6 @@ enum class LocationType : uint8_t {
     Country, City, Place
 };
 
-// 위치 정보 (CurrentLocations 대체)
 struct LocationComp {
     uint32_t zone_id = 0;
     std::string location_name;
@@ -43,7 +42,8 @@ struct LocationComp {
     float y = 0.0f;
     float z = 0.0f;
     LocationType type = LocationType::Unspecified;
-    uint32_t region_id = 0;
+    // 지역 ID (RegionId) > 구역 ID (TerritoryId) > 장소 이름 계층 구조
+    uint32_t region_id = 0;  
     uint32_t territory_id = 0;
 };
 
@@ -51,7 +51,7 @@ struct LocationComp {
 struct EmotionComp {
     std::string current_emotion;
     std::string base_emotion;
-    uint8_t current_emotion_id = 0;  // 🆕 고속 비교 및 쇠퇴 룩업용
+    uint8_t current_emotion_id = 0;  //  고속 비교 및 쇠퇴 룩업용
     uint8_t base_emotion_id = 0;
     int decay_ticks_remaining = 0;
 };
@@ -67,18 +67,18 @@ struct CooldownComp {
     int32_t last_initiative_tick = 0;                          // 마지막으로 주도를 시도한 틱 (스팸 방지)
     int32_t social_energy = 100;                               // 현재 사회적 에너지 (외향성에 따라 다름)
     int32_t max_social_energy = 100;                           // 최대 사회적 에너지 (외향성에 따라 다름)
-    int32_t cognitive_refractory_until = 0;                    // 인지적 불응기 해제 틱 (대화 직후 다른 자극 무시)
+    int32_t cognitive_refractory_until = 0;                    // 인지적 불응기 해제 틱 (전역 쿨타임)
 };
 
 
-// 🆕 이동 속도 및 방향 벡터 (렌더링 동기화용)
+//  이동 속도 및 방향 벡터 (렌더링 동기화용)
 struct VelocityComp {
     float speed = 2.0f;     // m/s
     float dir_x = 0.0f;
     float dir_z = 0.0f;
 };
 
-// 🆕 길찾기 결과 경로
+//  길찾기 결과 경로
 struct PathfindingComp {
     std::vector<GridVector2> waypoints;   // 남은 경로의 타일 좌표들
     size_t current_waypoint_index = 0;    // 현재 목표 웨이포인트 인덱스
@@ -89,7 +89,7 @@ enum class JobCategory : uint8_t {
     Unspecified = 0, Sleep, Eat, Social, Work, Travel, Survival
 };
 
-// Axis 2: Job 컴포넌트 (C# 대뇌가 할당한 고차원 의도)
+//  Job 컴포넌트 (C# 대뇌가 할당한 고차원 의도)
 struct JobComp {
     uint64_t job_id = 0;
     std::string target_location;
@@ -103,7 +103,7 @@ struct JobComp {
     JobCategory category = JobCategory::Unspecified;
 };
 
-// Axis 2: Toil 컴포넌트 (C++ 척수가 실행하는 마이크로 상태)
+//  Toil 컴포넌트 (C++ 척수가 실행하는 마이크로 상태)
 enum class ToilState {
     Idle,
     Moving,
@@ -121,7 +121,7 @@ enum class SurvivalType : uint8_t {
     None = 0, Hunger, Fatigue
 };
 
-// 🆕 생체 욕구 컴포넌트
+//  생체 욕구 컴포넌트
 struct NeedsComp {
     float hunger = 100.0f;
     float fatigue = 100.0f;
@@ -130,7 +130,7 @@ struct NeedsComp {
     entt::entity occupied_furniture = entt::null; // 점유 중인 가구/사물 엔티티
 };
 
-// 🆕 사물 상호작용 종류
+//  사물 상호작용 종류
 enum class AffordanceType : uint8_t {
     Unspecified = 0,
     Sit = 1,
@@ -140,7 +140,7 @@ enum class AffordanceType : uint8_t {
     Pray = 5
 };
 
-// 🆕 사물 상호작용 컴포넌트
+//  사물 상호작용 컴포넌트
 struct AffordanceComp {
     AffordanceType type;
     entt::entity occupied_by = entt::null;
@@ -154,7 +154,7 @@ struct LastSyncedComp {
     std::string activity;
 };
 
-// 🆕 대기 멈춤의 원인 열거형
+//  대기 멈춤의 원인 열거형
 enum class BusyReason {
     Dialogue,
     Reflection,
@@ -192,7 +192,7 @@ struct AgentIdMapper {
     std::unordered_map<uint32_t, std::string> numeric_to_string;
 };
 
-// 🆕 감정 성향 카테고리 열거형
+//  감정 성향 카테고리 열거형
 enum class EmotionCategory : uint8_t {
     Neutral = 0,    // 평온 (전염성 없음)
     Anger = 1,      // 분노 계열 ("분노", "분노함" 등)
@@ -203,11 +203,11 @@ enum class EmotionCategory : uint8_t {
 //  고속 캐시 프렌들리 감정 레지스트리 구조체
 struct EmotionRegistry {
     std::unordered_map<std::string, uint8_t> name_to_id;
-    std::vector<int32_t> decay_ticks_table; // 감정 ID -> 지속 틱수 (Flat Array, O(1))
-    std::vector<EmotionCategory> category_table; // 🆕 감정 ID -> 카테고리 (Flat Array, O(1))
+    std::vector<int32_t> decay_ticks_table;      // 감정 ID -> 지속 틱수 (Flat Array, O(1))
+    std::vector<EmotionCategory> category_table; //  감정 ID -> 카테고리 (Flat Array, O(1))
 };
 
-// 🆕 행동 트리 컴포넌트
+//  행동 트리 컴포넌트
 struct BehaviorTreeComp {
     std::unique_ptr<BT::BTNode> root_node;
 };

@@ -4,7 +4,7 @@
 #include <iostream>
 #include <cmath>
 
-// Axis 2: Job 및 Toil 상태 머신 제어 시스템
+//  Job 및 Toil 상태 머신 제어 시스템
 void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     auto view = reg.view<LocationComp, ActivityComp, IdentityComp>();
 
@@ -12,7 +12,7 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
         auto& job = reg.get_or_emplace<JobComp>(entity);
         auto& toil = reg.get_or_emplace<ToilComp>(entity);
 
-        // 🆕 만약 생체 위기 해결(로컬 BT) 중인 경우, 고차원 JobDriver 상태 머신은 중지
+        //  만약 생체 위기 해결(로컬 BT) 중인 경우, 고차원 JobDriver 상태 머신은 중지
         if (reg.all_of<NeedsComp>(entity) && reg.get<NeedsComp>(entity).is_resolving_survival) {
             return;
         }

@@ -22,7 +22,7 @@ void SpatialHashGrid::Insert(entt::entity e, uint32_t zone_id) {
     auto it = entity_to_zone_.find(e);
     if (it != entity_to_zone_.end()) {
         if (it->second == zone_id) {
-            return; // 🆕 이미 해당 구역에 삽입되어 있음 (O(1) 스킵)
+            return; //  이미 해당 구역에 삽입되어 있음 (O(1) 스킵)
         }
         // 다른 구역에 배치되어 있던 경우 새 구역으로 이동
         Move(e, it->second, zone_id);

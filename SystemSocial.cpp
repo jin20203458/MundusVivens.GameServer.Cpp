@@ -284,8 +284,16 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
 
             if (dis(gen) >= accept_prob) {
                 // 수락 거절
+                int embarrassment = 2;
+                if (ext_i > 0.7f) {
+                    embarrassment = 1; // 외향적: 뻘줌함이 빨리 풀림 (1틱)
+                } else if (ext_i < 0.3f) {
+                    embarrassment = 3; // 내향적: 뻘줌함이 오래감 (3틱)
+                }
+                init_cooldown.cognitive_refractory_until = tick + embarrassment;
+
                 std::cout << "💔 [대화 수락 거절] " << reg.get<IdentityComp>(target).display_name 
-                          << "이(가) " << reg.get<IdentityComp>(initiator).display_name << "의 대화 요청을 거절했습니다." << std::endl;
+                          << "이(가) " << reg.get<IdentityComp>(initiator).display_name << "의 대화 요청을 거절했습니다. (뻘줌 쿨다운: " << embarrassment << "틱)" << std::endl;
                 init_cooldown.cooldown_per_target[id_t] = tick + 3;
                 continue;
             }
@@ -563,18 +571,71 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                     const auto& bystanders = grid.GetEntitiesInZone(zone_id);
 
                                     std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
+                                    
+                                    // 대화의 중심 위치 계산 (참여자들의 평균 위치)
+                                    float talk_x = 0.0f, talk_y = 0.0f, talk_z = 0.0f;
+                                    int talk_count = 0;
+                                    for (auto p_ent : group_participants) {
+                                        if (reg.valid(p_ent)) {
+                                            if (auto* loc = reg.try_get<LocationComp>(p_ent)) {
+                                                talk_x += loc->x;
+                                                talk_y += loc->y;
+                                                talk_z += loc->z;
+                                                talk_count++;
+                                            }
+                                        }
+                                    }
+                                    if (talk_count > 0) {
+                                        talk_x /= talk_count;
+                                        talk_y /= talk_count;
+                                        talk_z /= talk_count;
+                                    }
+
+                                    // 소문 유포 주체 지정: 첫 번째 대화 화자
+                                    uint32_t source_npc_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
+
                                     for (auto ent : bystanders) {
                                         if (part_set.find(ent) == part_set.end()) {
                                             if (reg.valid(ent) && reg.all_of<ActivityComp>(ent)) {
                                                 if (auto* bystander_ident = reg.try_get<IdentityComp>(ent)) {
                                                     uint32_t bystander_id = bystander_ident->npc_id;
                                                     std::string bystander_name = bystander_ident->display_name;
-                                                    uint32_t subject_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
 
-                                                    std::cout << "👂 [엿듣기 감지] " << bystander_name << "이(가) [" 
-                                                              << zone_loc_name << "]에서 일어난 대화를 엿들었습니다! 소문 주입 진행..." << std::endl;
+                                                    // 방관자의 위치
+                                                    auto* bystander_loc = reg.try_get<LocationComp>(ent);
+                                                    if (!bystander_loc) continue;
 
-                                                    async_client.InjectBeliefAsync(bystander_id, subject_id, result.dialogue_summary, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, [bystander_name](bool success, const std::string& msg) {
+                                                    // 거리 계산
+                                                    float dx = bystander_loc->x - talk_x;
+                                                    float dy = bystander_loc->y - talk_y;
+                                                    float dz = bystander_loc->z - talk_z;
+                                                    float distance = std::sqrt(dx*dx + dy*dy + dz*dz);
+
+                                                    std::string content = "";
+                                                    uint32_t subject_id = source_npc_id; // 기본적으로 대화의 주체인 첫 번째 화자를 대입
+                                                    
+                                                    if (distance <= 3.0f) {
+                                                        // 가까이 (3m 이내): 대화 요약본 주입
+                                                        content = "[엿들음] " + result.dialogue_summary;
+                                                        std::cout << "👂 [엿듣기 감지 - 가까이] " << bystander_name << "이(가) 대화를 가까이서 명확히 들었습니다. (거리: " << distance << "m)" << std::endl;
+                                                    } else if (distance <= 8.0f) {
+                                                        // 중간 (3m ~ 8m): 키워드 기반 정보 주입
+                                                        if (result.keywords.empty()) {
+                                                            continue; // 키워드가 없으면 생략
+                                                        }
+                                                        std::string kw_str = "";
+                                                        for (size_t k = 0; k < result.keywords.size(); ++k) {
+                                                            kw_str += result.keywords[k];
+                                                            if (k + 1 < result.keywords.size()) kw_str += ", ";
+                                                        }
+                                                        content = "[엿들음 - 단편적 키워드] 주제: " + kw_str;
+                                                        std::cout << "👂 [엿듣기 감지 - 멀리] " << bystander_name << "이(가) 대화의 핵심 단어들만 엿들었습니다. (거리: " << distance << "m) 키워드: " << kw_str << std::endl;
+                                                    } else {
+                                                        // 너무 멀거나 다른 구역 (8m 초과): 소문 주입 없음
+                                                        continue;
+                                                    }
+
+                                                    async_client.InjectBeliefAsync(bystander_id, subject_id, content, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, source_npc_id, [bystander_name](bool success, const std::string& msg) {
                                                         if (success) {
                                                             std::cout << "📢 [믿음(소문) 주입 성공] " << bystander_name << "의 기억에 엿들은 정보가 주입되었습니다." << std::endl;
                                                         } else {

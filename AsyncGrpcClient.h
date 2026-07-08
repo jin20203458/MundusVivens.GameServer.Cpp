@@ -39,7 +39,7 @@ public:
     void EndPlayerDialogueAsync(uint64_t session_id, EndDialogueCallback on_complete);
 
     //  비동기 믿음(소문) 주입
-    void InjectBeliefAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, InjectBeliefCallback on_complete);
+    void InjectBeliefAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, InjectBeliefCallback on_complete);
 
     // 🚀 Axis 2: Job 및 Interrupt 관리 비동기 RPC
     using PendingJobsCallback = std::function<void(bool success, const std::vector<MundusVivensClient::JobPayload>& jobs)>;
@@ -56,7 +56,7 @@ private:
     boost::asio::awaitable<void> DoStartPlayerDialogue(std::string player_id, uint32_t npc_id, StartDialogueCallback on_complete);
     boost::asio::awaitable<void> DoSendPlayerMessage(uint64_t session_id, std::string message, SendPlayerMessageCallback on_complete);
     boost::asio::awaitable<void> DoEndPlayerDialogue(uint64_t session_id, EndDialogueCallback on_complete);
-    boost::asio::awaitable<void> DoInjectBelief(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, InjectBeliefCallback on_complete);
+    boost::asio::awaitable<void> DoInjectBelief(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, InjectBeliefCallback on_complete);
     boost::asio::awaitable<void> DoGetPendingJobs(int32_t current_tick, PendingJobsCallback on_complete);
     boost::asio::awaitable<void> DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, std::string detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete);
 

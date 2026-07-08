@@ -18,7 +18,7 @@ struct AgentEmotionUpdate {
     uint32_t agent_id;
     std::string new_emotion;
     int intensity = 0;
-    uint8_t category = 0; // 🆕
+    uint8_t category = 0; 
 };
 
 struct JobPayload {
@@ -31,19 +31,17 @@ struct JobPayload {
     std::string intent;
     uint32_t target_agent_id = 0;
     int32_t priority = 0;
-    uint8_t category = 0; // 🆕
+    uint8_t category = 0; 
 };
 
 struct DialogueResult {
     uint64_t task_id;
-    bool is_queued = false;
-    bool is_completed = false;
-    bool completed_immediately = false;
     std::string dialogue_summary;
     std::vector<std::string> dialogue_lines;
     std::vector<DialogueLine> structured_lines;
     std::vector<AgentEmotionUpdate> emotion_updates; 
     std::vector<JobPayload> next_jobs; 
+    std::vector<std::string> keywords; 
     bool has_error = false; 
 };
 
@@ -70,7 +68,7 @@ struct InitialAgentState {
     float y = 0.0f;
     float z = 0.0f;
 
-    // 심리 및 상태 정보
+	// 감정, 활동, 외향성 초기값
     std::string emotion;
     std::string activity;
     float extroversion = 0.5f;
@@ -83,28 +81,28 @@ struct LocationData {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
-    uint8_t type = 0; // 🆕
-    uint32_t region_id = 0; // 🆕
-    uint32_t territory_id = 0; // 🆕
+    uint8_t type = 0; 
+    uint32_t region_id = 0; 
+    uint32_t territory_id = 0; 
 };
 
 struct FurnitureData {
     std::string name;
-    uint8_t type = 0; // 🔄
+    uint8_t type = 0; 
     std::string parent_location;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
-    bool is_temporary = false; // 🆕
+    bool is_temporary = false; 
 };
 
-//  월드 부트스트랩 데이터 구조체
 struct WorldBootstrapData {
     std::vector<LocationData> locations;
     std::vector<InitialAgentState> agents;
     std::vector<FurnitureData> furniture;
 };
 
+//  에이전트의 실시간 상태를 조회할 때 반환되는 구조체
 struct AgentStatus {
     std::string name;
     std::string location;
@@ -116,7 +114,7 @@ struct AgentStatus {
     std::vector<std::string> memories;
 };
 
-//  배치 상태 업데이트용 구조체
+//  에이전트 상태를 배치 업데이트할 때 전달되는 구조체
 struct AgentStatusUpdate {
     uint32_t agent_id;
     std::string location;
@@ -135,11 +133,12 @@ public:
     // NPC 간 대화를 트리거합니다.
     DialogueResult TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b);
 
-    // 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
+    // [미래 준비용] 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
+    // 향후 유니티 ◄► C++ 간의 TCP 브릿지 패킷(예: CS_INSPECT_NPC_MEMORIES) 추가 시 활성화할 예정입니다.
     AgentStatus GetAgentStatus(uint32_t agent_id);
 
     // 특정 에이전트에게 믿음(소문)을 강제로 주입합니다.
-    bool InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, std::string& out_message);
+    bool InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, std::string& out_message);
 
 
 

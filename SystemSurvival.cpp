@@ -4,7 +4,7 @@
 #include <iostream>
 #include <cmath>
 
-// 🆕 생체 욕구 감쇠 시스템 (기존 SystemSurvivalOverride를 경량화)
+//  생체 욕구 감쇠 시스템 (기존 SystemSurvivalOverride를 경량화)
 void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     auto view = reg.view<NeedsComp, LocationComp, ToilComp, JobComp>();
     view.each([&](entt::entity entity, NeedsComp& needs, LocationComp& loc, ToilComp& toil, JobComp& job) {
@@ -36,7 +36,7 @@ void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int curr
     });
 }
 
-// 🆕 사물 상호작용 및 욕구 충전 시스템 (일반 계획 스케줄 전용으로 축소)
+//  사물 상호작용 및 욕구 충전 시스템 (일반 계획 스케줄 전용으로 축소)
 void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     // 1. 점유 가구 상태 예외 보정
     auto furn_view = reg.view<AffordanceComp>();
