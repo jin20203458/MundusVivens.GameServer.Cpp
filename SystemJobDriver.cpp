@@ -4,8 +4,18 @@
 #include <iostream>
 #include <cmath>
 
+static const char* ToilStateToString(ToilState state) {
+    switch (state) {
+        case ToilState::Idle: return "Idle";
+        case ToilState::Moving: return "Moving";
+        case ToilState::Working: return "Working";
+        case ToilState::Interrupted: return "Interrupted";
+        default: return "Unknown";
+    }
+}
+
 //  Job 및 Toil 상태 머신 제어 시스템
-void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
+void SystemJobDriver(entt::registry& reg, LocationRegistry& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     auto view = reg.view<LocationComp, ActivityComp, IdentityComp>();
 
     view.each([&](entt::entity entity, LocationComp& loc, ActivityComp& act, IdentityComp& identity) {
@@ -20,6 +30,7 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
         // NPC가 대화중이거나 바쁘면 Toil 상태를 Interrupted로 전환하고 대기
         if (reg.all_of<BusyTag>(entity)) {
             if (toil.state != ToilState::Interrupted) {
+                ToilState old_state = toil.state;
                 // 이전에 진행 중이던 활성 Job이 있었고, 그것이 대화로 중단되었다면 Report
                 if (job.is_active) {
                     std::cout << "⏸️ [Job 중단] " << identity.display_name << "의 Job " << job.job_id 
@@ -52,6 +63,8 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                 }
                 toil.state = ToilState::Interrupted;
                 act.current_activity = "대화 중";
+                std::cout << "🔄 [Toil Transition] " << identity.display_name << ": " 
+                          << ToilStateToString(old_state) << " ➔ Interrupted (대화 시작)" << std::endl;
             }
             return;
         }
@@ -60,6 +73,8 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
         if (toil.state == ToilState::Interrupted) {
             toil.state = ToilState::Idle;
             act.current_activity = "대기";
+            std::cout << "🔄 [Toil Transition] " << identity.display_name 
+                      << ": Interrupted ➔ Idle (대화 종료 복귀)" << std::endl;
         }
 
         if (!job.is_active) {
@@ -73,6 +88,9 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                 if (loc.location_name != job.target_location) {
                     toil.state = ToilState::Moving;
                     act.current_activity = "이동 중: " + job.target_location;
+                    std::cout << "🔄 [Toil Transition] " << identity.display_name 
+                              << ": Idle ➔ Moving (Job ID: " << job.job_id 
+                              << ", Target: " << job.target_location << ")" << std::endl;
 
                     // 원정 출발 전 생체 욕구 완충 (황무지 무역 대비)
                     float dx = job.target_x - loc.x;
@@ -89,17 +107,17 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                     }
                 } else {
                     toil.state = ToilState::Working;
-                    toil.duration_ticks = 3; // 기본적으로 3틱(15초) 동안 해당 활동 진행
+                    toil.duration_ticks = 3; // 기본적으로 3틱(30초) 동안 해당 활동 진행
                     act.current_activity = job.intent;
+                    std::cout << "🔄 [Toil Transition] " << identity.display_name 
+                              << ": Idle ➔ Working (즉시 도달, Job ID: " << job.job_id 
+                              << ", Intent: " << job.intent << ")" << std::endl;
                 }
                 break;
             }
             case ToilState::Moving: {
-                if (loc.location_name == job.target_location) {
-                    toil.state = ToilState::Working;
-                    toil.duration_ticks = 3;
-                    act.current_activity = job.intent;
-                }
+                // [Smell #3 해결] 물리적으로 도달하지 않은 이동 중에는 이곳에서 강제 상태 전이를 하지 않습니다.
+                // 오직 물리적으로 웨이포인트를 소모해 목적지에 완전히 닿았을 때(SystemMovement)만 Working으로 전이됩니다.
                 break;
             }
             case ToilState::Working: {
@@ -114,6 +132,8 @@ void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tic
                     job.is_active = false;
                     toil.state = ToilState::Idle;
                     act.current_activity = "대기";
+                    std::cout << "🔄 [Toil Transition] " << identity.display_name 
+                              << ": Working ➔ Idle (Job ID: " << job.job_id << " 완료)" << std::endl;
                     
                     reg.emplace_or_replace<BusyTag>(entity, BusyReason::ScheduleWait, 0.0f);
 

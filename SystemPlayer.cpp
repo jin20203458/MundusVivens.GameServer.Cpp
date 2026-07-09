@@ -7,7 +7,7 @@
 #include <iostream>
 
 // 7. 연결 끊긴 플레이어의 대화 및 좀비 엔티티 정리 시스템
-void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue) {
+void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue) {
     std::vector<entt::entity> to_cleanup;
     auto view = reg.view<PlayerTag>();
     view.each([&](entt::entity entity, const PlayerTag& tag) {
@@ -51,7 +51,7 @@ void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGr
         // Spatial Hash Grid에서 플레이어 삭제
         if (reg.all_of<LocationComp>(player_ent)) {
             const auto& loc = reg.get<LocationComp>(player_ent);
-            grid.Remove(player_ent, loc.zone_id);
+            grid.RemoveEntity(player_ent);
         }
 
         // EntityIndex 맵핑 소거
@@ -67,7 +67,7 @@ void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGr
 }
 
 // 8. 플레이어 커맨드 처리 시스템
-void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
+void SystemPlayerCommands(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp,
                           MundusVivens::AsyncGrpcClient& async_client, int tick, GrpcResultQueue& grpc_queue) {
     static std::vector<PlayerCommand> local_commands;
     tcp.DrainPlayerCommands(local_commands);
@@ -109,9 +109,7 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
 
             // 플레이어 공간 등록
             auto& loc = reg.get<LocationComp>(player_ent);
-            uint32_t zone_id = grid.GetOrCreateZoneId(loc.location_name);
-            loc.zone_id = zone_id;
-            grid.Insert(player_ent, zone_id);
+            grid.UpdateEntityPosition(player_ent, loc.x, loc.z, reg);
 
             // 로그인 응답 패킷 작성
             mundusvivens::LoginResponse resp;
@@ -169,15 +167,10 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
                 float target_y = req.target_location().position().y();
                 float target_z = req.target_location().position().z();
 
-                uint32_t old_zone = loc.zone_id;
-                uint32_t new_zone = grid.GetOrCreateZoneId(new_loc);
-
-                loc.location_name = new_loc;
-                loc.zone_id = new_zone;
                 loc.x = target_x;
                 loc.y = target_y;
                 loc.z = target_z;
-                grid.Move(player_ent, old_zone, new_zone);
+                grid.UpdateEntityPosition(player_ent, loc.x, loc.z, reg);
 
                 std::cout << "🏃 [TCP 플레이어 이동] 플레이어 " << identity.display_name 
                           << " 이동: [" << old_loc << "] ➔ [" << new_loc << "]" << std::endl;
@@ -223,9 +216,13 @@ void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer&
             const auto& npc_id = reg.get<IdentityComp>(npc_ent);
 
             // 동일 구역인지 검증
-            if (player_loc.zone_id != npc_loc.zone_id) {
-                std::cerr << "❌ [플레이어 대화 에러] 플레이어와 NPC가 다른 구역에 있음. 플레이어: " 
-                          << player_loc.location_name << ", NPC: " << npc_loc.location_name << std::endl;
+            float dx = player_loc.x - npc_loc.x;
+            float dz = player_loc.z - npc_loc.z;
+            float dist = std::sqrt(dx*dx + dz*dz);
+            if (player_loc.location_name != npc_loc.location_name || dist > 8.0f) {
+                std::cerr << "❌ [플레이어 대화 에러] 플레이어와 NPC가 다른 구역에 있거나 너무 멉니다. 거리: " 
+                          << dist << "m, 플레이어: " << player_loc.location_name 
+                          << ", NPC: " << npc_loc.location_name << std::endl;
                 continue;
             }
 

@@ -124,7 +124,7 @@ void SystemEmotionDecay(entt::registry& reg) {
 }
 
 // 대화 트리거 & 다자간 합류 로직 시스템
-void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
+void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp,
                              MundusVivens::AsyncGrpcClient& client, int tick,
                              std::mt19937& gen, std::uniform_real_distribution<>& dis,
                              GrpcResultQueue& grpc_queue) {
@@ -148,26 +148,52 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
     constexpr float BASE_INITIATION_PROB = 0.15f; // 기본 주도 확률 (15%)
     constexpr float MAX_DIALOGUE_DISTANCE = 20.0f; // 최대 대화 가능 거리
 
-    for (const auto& [zone_id, entities] : grid.AllZones()) {
-        if (entities.size() < 2) continue; // 혼자 있는 구역은 건너뜀
+    // 대화 후보가 될 수 있는 모든 NPC 수집 (PlayerTag, BusyTag 제외, Cooldown 및 소셜에너지 체크)
+    auto all_candidates_view = reg.view<LocationComp, ActivityComp, IdentityComp>();
+    std::vector<entt::entity> all_npcs;
+    for (auto ent : all_candidates_view) {
+        if (!reg.all_of<PlayerTag>(ent)) {
+            all_npcs.push_back(ent);
+        }
+    }
 
-        // 대화 가능한 후보자 필터링
+    std::unordered_set<entt::entity> processed_entities;
+
+    for (auto initiator : all_npcs) {
+        if (!reg.valid(initiator)) continue;
+        if (processed_entities.count(initiator)) continue;
+        if (reg.all_of<BusyTag>(initiator)) continue;
+
+        const auto& cooldown = reg.get_or_emplace<CooldownComp>(initiator);
+        if (cooldown.social_energy < 20) continue; // 사회적 에너지 부족
+        if (tick <= cooldown.cognitive_refractory_until) continue; // 인지적 불응기
+        if (tick <= cooldown.last_initiative_tick) continue; // 시도 쿨다운
+
+        const auto& loc_i = reg.get<LocationComp>(initiator);
+
+        // 1. 주변의 대화 가능 후보자들 수집 (GetNearbyEntities 사용!)
+        auto neighbors = grid.GetNearbyEntities(loc_i.x, loc_i.z, MAX_DIALOGUE_DISTANCE, reg);
         std::vector<entt::entity> candidates;
-        for (auto ent : entities) {
-            if (!reg.valid(ent)) continue;
-            if (reg.all_of<PlayerTag>(ent)) continue;
-            if (reg.all_of<BusyTag>(ent)) continue;
-            if (!reg.all_of<ActivityComp>(ent)) continue; // 가구나 사물 엔티티 제외
+        
+        // initiator 자신도 후보에 포함 (기존 로직 흐름과 호환)
+        candidates.push_back(initiator);
 
-            const auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
-            if (cooldown.social_energy < 20) continue; // 사회적 에너지 고갈 상태면 대화 제외 (최소 20 필요)
-            if (tick <= cooldown.cognitive_refractory_until) continue; // 인지적 불응기 상태면 대화 제외
+        for (auto neighbor : neighbors) {
+            if (neighbor == initiator) continue;
+            if (processed_entities.count(neighbor)) continue;
+            if (reg.all_of<PlayerTag>(neighbor)) continue;
+            if (reg.all_of<BusyTag>(neighbor)) continue;
+            if (!reg.all_of<ActivityComp>(neighbor)) continue;
 
-            const auto& act = reg.get<ActivityComp>(ent);
+            const auto& n_cooldown = reg.get_or_emplace<CooldownComp>(neighbor);
+            if (n_cooldown.social_energy < 20) continue;
+            if (tick <= n_cooldown.cognitive_refractory_until) continue;
+
+            const auto& act = reg.get<ActivityComp>(neighbor);
             double roll = dis(gen);
             if (IsNPCFocusedOnActivity(act.current_activity, roll)) continue;
-            
-            candidates.push_back(ent);
+
+            candidates.push_back(neighbor);
         }
 
         if (candidates.size() < 2) continue;
@@ -182,14 +208,15 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
         float location_modifier = GetLocationSocialModifier(zone_loc_type);
 
         // 주도자(Initiator) 개별 판정
-        for (entt::entity initiator : candidates) {
-            if (reg.all_of<BusyTag>(initiator)) continue; // 이미 엮였을 수 있음
+        for (entt::entity candidate_init : candidates) {
+            if (candidate_init != initiator) continue; // 우리는 현재 initiator를 검사 중이므로 initiator만 수행
+            if (reg.all_of<BusyTag>(candidate_init)) continue; 
 
-            auto& init_cooldown = reg.get_or_emplace<CooldownComp>(initiator);
-            if (tick <= init_cooldown.last_initiative_tick) continue; // 스팸 방지
+            auto& init_cooldown = reg.get_or_emplace<CooldownComp>(candidate_init);
+            if (tick <= init_cooldown.last_initiative_tick) continue; 
 
             float ext_i = 0.5f;
-            if (auto* pers = reg.try_get<PersonalityComp>(initiator)) {
+            if (auto* pers = reg.try_get<PersonalityComp>(candidate_init)) {
                 ext_i = pers->extroversion;
             }
 
@@ -203,14 +230,13 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
             init_cooldown.last_initiative_tick = tick; // 시도 기록
 
             // 타깃 선택 (가중 랜덤)
-            const auto& loc_i = reg.get<LocationComp>(initiator);
-            uint32_t id_i = reg.get<IdentityComp>(initiator).npc_id;
+            uint32_t id_i = reg.get<IdentityComp>(candidate_init).npc_id;
 
             std::vector<std::pair<entt::entity, float>> potential_targets;
             float total_weight = 0.0f;
 
             for (entt::entity target_candidate : candidates) {
-                if (target_candidate == initiator) continue;
+                if (target_candidate == candidate_init) continue;
                 if (reg.all_of<BusyTag>(target_candidate)) continue;
 
                 uint32_t id_c = reg.get<IdentityComp>(target_candidate).npc_id;
@@ -221,7 +247,7 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                     continue; // 이 상대와는 아직 쿨다운 중
                 }
 
-                // 거리 필터 (좌표 기반)
+                // 거리 필터
                 const auto& loc_c = reg.get<LocationComp>(target_candidate);
                 float dx = loc_i.x - loc_c.x;
                 float dz = loc_i.z - loc_c.z;
@@ -230,7 +256,7 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
 
                 // 호감도 조회
                 int liking_i_to_c = 0;
-                if (auto* rel_comp = reg.try_get<RelationshipCacheComp>(initiator)) {
+                if (auto* rel_comp = reg.try_get<RelationshipCacheComp>(candidate_init)) {
                     const auto& rels = rel_comp->relationships;
                     auto it_rel = rels.find(id_c);
                     if (it_rel != rels.end()) liking_i_to_c = it_rel->second.liking;
@@ -293,19 +319,19 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                 init_cooldown.cognitive_refractory_until = tick + embarrassment;
 
                 std::cout << "💔 [대화 수락 거절] " << reg.get<IdentityComp>(target).display_name 
-                          << "이(가) " << reg.get<IdentityComp>(initiator).display_name << "의 대화 요청을 거절했습니다. (뻘줌 쿨다운: " << embarrassment << "틱)" << std::endl;
+                          << "이(가) " << reg.get<IdentityComp>(candidate_init).display_name << "의 대화 요청을 거절했습니다. (뻘줌 쿨다운: " << embarrassment << "틱)" << std::endl;
                 init_cooldown.cooldown_per_target[id_t] = tick + 3;
                 continue;
             }
 
             // 대화 성립! 다자간 합류 판정
-            boost::container::small_vector<entt::entity, 10> group_participants = { initiator, target };
+            boost::container::small_vector<entt::entity, 10> group_participants = { candidate_init, target };
             std::vector<uint32_t> group_ids = { id_i, id_t };
 
             constexpr float BASE_JOIN_PROB = 0.25f;
 
             for (entt::entity other : candidates) {
-                if (other == initiator || other == target) continue;
+                if (other == candidate_init || other == target) continue;
                 if (group_participants.size() >= 4) break;
                 if (reg.all_of<BusyTag>(other)) continue;
 
@@ -348,6 +374,11 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                     group_participants.push_back(other);
                     group_ids.push_back(id_o);
                 }
+            }
+
+            // 이번 대화에 참여한 모든 멤버들을 이번 틱 처리 완료 리스트에 추가
+            for (auto p : group_participants) {
+                processed_entities.insert(p);
             }
 
             std::string participant_names_str = "";
@@ -399,8 +430,8 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
 
             // [비동기 gRPC 호출]
             client.TriggerDialogueAsync(std::move(group_ids), 
-                [&grpc_queue, group_participants, tick, zone_loc_name, &grid](bool success, const MundusVivens::DialogueResult& result) {
-                    grpc_queue.Push([success, result, group_participants, tick, zone_loc_name, &grid](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+                [&grpc_queue, group_participants, tick, zone_loc_name, location_registry = &grid](bool success, const MundusVivens::DialogueResult& result) {
+                    grpc_queue.Push([success, result, group_participants, tick, zone_loc_name, location_registry](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
                         
                         bool all_valid = true;
                         for (auto ent : group_participants) {
@@ -564,85 +595,78 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                                 }
                             }
 
-                            // 엿듣기(Eavesdropping) 동작성 추가
+                            // 엿듣기(Eavesdropping) 동작성 추가 (셀 인접 거리 8.0m 기반 검색으로 완전히 재편)
                             if (!group_participants.empty() && reg.valid(group_participants[0])) {
-                                uint32_t zone_id = reg.get<LocationComp>(group_participants[0]).zone_id;
-                                if (zone_id != 0) {
-                                    const auto& bystanders = grid.GetEntitiesInZone(zone_id);
-
-                                    std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
-                                    
-                                    // 대화의 중심 위치 계산 (참여자들의 평균 위치)
-                                    float talk_x = 0.0f, talk_y = 0.0f, talk_z = 0.0f;
-                                    int talk_count = 0;
-                                    for (auto p_ent : group_participants) {
-                                        if (reg.valid(p_ent)) {
-                                            if (auto* loc = reg.try_get<LocationComp>(p_ent)) {
-                                                talk_x += loc->x;
-                                                talk_y += loc->y;
-                                                talk_z += loc->z;
-                                                talk_count++;
-                                            }
+                                float talk_x = 0.0f, talk_y = 0.0f, talk_z = 0.0f;
+                                int talk_count = 0;
+                                for (auto p_ent : group_participants) {
+                                    if (reg.valid(p_ent)) {
+                                        if (auto* loc = reg.try_get<LocationComp>(p_ent)) {
+                                            talk_x += loc->x;
+                                            talk_y += loc->y;
+                                            talk_z += loc->z;
+                                            talk_count++;
                                         }
                                     }
-                                    if (talk_count > 0) {
-                                        talk_x /= talk_count;
-                                        talk_y /= talk_count;
-                                        talk_z /= talk_count;
-                                    }
+                                }
+                                if (talk_count > 0) {
+                                    talk_x /= talk_count;
+                                    talk_y /= talk_count;
+                                    talk_z /= talk_count;
+                                }
 
-                                    // 소문 유포 주체 지정: 첫 번째 대화 화자
-                                    uint32_t source_npc_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
+                                // 3x3 셀 기반 8.0m 내 방관자들 실시간 검색
+                                auto bystanders = location_registry->GetNearbyEntities(talk_x, talk_z, 8.0f, reg);
+                                std::unordered_set<entt::entity> part_set(group_participants.begin(), group_participants.end());
+                                uint32_t source_npc_id = reg.get<IdentityComp>(group_participants[0]).npc_id;
 
-                                    for (auto ent : bystanders) {
-                                        if (part_set.find(ent) == part_set.end()) {
-                                            if (reg.valid(ent) && reg.all_of<ActivityComp>(ent)) {
-                                                if (auto* bystander_ident = reg.try_get<IdentityComp>(ent)) {
-                                                    uint32_t bystander_id = bystander_ident->npc_id;
-                                                    std::string bystander_name = bystander_ident->display_name;
+                                for (auto ent : bystanders) {
+                                    if (part_set.find(ent) == part_set.end()) {
+                                        if (reg.valid(ent) && reg.all_of<ActivityComp>(ent)) {
+                                            if (auto* bystander_ident = reg.try_get<IdentityComp>(ent)) {
+                                                uint32_t bystander_id = bystander_ident->npc_id;
+                                                std::string bystander_name = bystander_ident->display_name;
 
-                                                    // 방관자의 위치
-                                                    auto* bystander_loc = reg.try_get<LocationComp>(ent);
-                                                    if (!bystander_loc) continue;
+                                                // 방관자의 위치
+                                                auto* bystander_loc = reg.try_get<LocationComp>(ent);
+                                                if (!bystander_loc) continue;
 
-                                                    // 거리 계산
-                                                    float dx = bystander_loc->x - talk_x;
-                                                    float dy = bystander_loc->y - talk_y;
-                                                    float dz = bystander_loc->z - talk_z;
-                                                    float distance = std::sqrt(dx*dx + dy*dy + dz*dz);
+                                                // 거리 계산
+                                                float dx = bystander_loc->x - talk_x;
+                                                float dy = bystander_loc->y - talk_y;
+                                                float dz = bystander_loc->z - talk_z;
+                                                float distance = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-                                                    std::string content = "";
-                                                    uint32_t subject_id = source_npc_id; // 기본적으로 대화의 주체인 첫 번째 화자를 대입
-                                                    
-                                                    if (distance <= 3.0f) {
-                                                        // 가까이 (3m 이내): 대화 요약본 주입
-                                                        content = "[엿들음] " + result.dialogue_summary;
-                                                        std::cout << "👂 [엿듣기 감지 - 가까이] " << bystander_name << "이(가) 대화를 가까이서 명확히 들었습니다. (거리: " << distance << "m)" << std::endl;
-                                                    } else if (distance <= 8.0f) {
-                                                        // 중간 (3m ~ 8m): 키워드 기반 정보 주입
-                                                        if (result.keywords.empty()) {
-                                                            continue; // 키워드가 없으면 생략
-                                                        }
-                                                        std::string kw_str = "";
-                                                        for (size_t k = 0; k < result.keywords.size(); ++k) {
-                                                            kw_str += result.keywords[k];
-                                                            if (k + 1 < result.keywords.size()) kw_str += ", ";
-                                                        }
-                                                        content = "[엿들음 - 단편적 키워드] 주제: " + kw_str;
-                                                        std::cout << "👂 [엿듣기 감지 - 멀리] " << bystander_name << "이(가) 대화의 핵심 단어들만 엿들었습니다. (거리: " << distance << "m) 키워드: " << kw_str << std::endl;
-                                                    } else {
-                                                        // 너무 멀거나 다른 구역 (8m 초과): 소문 주입 없음
-                                                        continue;
+                                                std::string content = "";
+                                                uint32_t subject_id = source_npc_id; // 기본적으로 대화의 주체인 첫 번째 화자를 대입
+                                                
+                                                if (distance <= 3.0f) {
+                                                    // 가까이 (3m 이내): 대화 요약본 주입
+                                                    content = "[엿들음] " + result.dialogue_summary;
+                                                    std::cout << "👂 [엿듣기 감지 - 가까이] " << bystander_name << "이(가) 대화를 가까이서 명확히 들었습니다. (거리: " << distance << "m)" << std::endl;
+                                                } else if (distance <= 8.0f) {
+                                                    // 중간 (3m ~ 8m): 키워드 기반 정보 주입
+                                                    if (result.keywords.empty()) {
+                                                        continue; // 키워드가 없으면 생략
                                                     }
-
-                                                    async_client.InjectBeliefAsync(bystander_id, subject_id, content, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, source_npc_id, [bystander_name](bool success, const std::string& msg) {
-                                                        if (success) {
-                                                            std::cout << "📢 [믿음(소문) 주입 성공] " << bystander_name << "의 기억에 엿들은 정보가 주입되었습니다." << std::endl;
-                                                        } else {
-                                                            std::cerr << "❌ [믿음(소문) 주입 실패] " << bystander_name << ": " << msg << std::endl;
-                                                        }
-                                                    });
+                                                    std::string kw_str = "";
+                                                    for (size_t k = 0; k < result.keywords.size(); ++k) {
+                                                        kw_str += result.keywords[k];
+                                                        if (k + 1 < result.keywords.size()) kw_str += ", ";
+                                                    }
+                                                    content = "[엿들음 - 단편적 키워드] 주제: " + kw_str;
+                                                    std::cout << "👂 [엿듣기 감지 - 멀리] " << bystander_name << "이(가) 대화의 핵심 단어들만 엿들었습니다. (거리: " << distance << "m) 키워드: " << kw_str << std::endl;
+                                                } else {
+                                                    continue;
                                                 }
+
+                                                async_client.InjectBeliefAsync(bystander_id, subject_id, content, mundusvivens::ProtoBeliefType::BELIEF_TYPE_OVERHEARD, source_npc_id, [bystander_name](bool success, const std::string& msg) {
+                                                    if (success) {
+                                                        std::cout << "📢 [믿음(소문) 주입 성공] " << bystander_name << "의 기억에 엿들은 정보가 주입되었습니다." << std::endl;
+                                                    } else {
+                                                        std::cerr << "❌ [믿음(소문) 주입 실패] " << bystander_name << ": " << msg << std::endl;
+                                                    }
+                                                });
                                             }
                                         }
                                     }
@@ -678,7 +702,7 @@ void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServ
                     });
                 });
 
-            break; // 한 zone에서 이번 틱에는 한 쌍만 대화 트리거
+            break; // 한 initiator에 대해서 대화 성립 성공 시 루프 탈출
         }
     }
 }

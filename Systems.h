@@ -7,7 +7,7 @@
 #include <random>
 #include <array>
 #include "AsyncGrpcClient.h"
-#include "SpatialHashGrid.h"
+#include "LocationRegistry.h"
 #include "GridMap.h"
 #include "Components.h"
 #include "TcpServer.h"
@@ -87,33 +87,33 @@ inline bool BroadcastProto(TcpServer& tcp, uint16_t packet_id, const T& message)
 
 void SystemEmotionDecay(entt::registry& reg);
 
-void SystemJobDriver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
+void SystemJobDriver(entt::registry& reg, LocationRegistry& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
 void SystemPathfinding(entt::registry& reg, const GridMap& map);
 
-void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick);
+void SystemMovement(entt::registry& reg, LocationRegistry& grid, int tick);
 
 float GetLocationSocialModifier(LocationType type);
 
-void SystemSocialInteraction(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
+void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp,
                                   MundusVivens::AsyncGrpcClient& client, int tick,
                                   std::mt19937& gen, std::uniform_real_distribution<>& dis,
                                   GrpcResultQueue& grpc_queue);
 
 void SystemNetworkSync(entt::registry& reg, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
-void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue);
+void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue);
 
-void SystemPlayerCommands(entt::registry& reg, SpatialHashGrid& grid, TcpServer& tcp,
+void SystemPlayerCommands(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp,
                           MundusVivens::AsyncGrpcClient& async_client, int tick, GrpcResultQueue& grpc_queue);
 
 void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick);
 
 void SystemBusyAmbient(entt::registry& reg, float deltaTime);
 
-void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
+void SystemSurvivalOverride(entt::registry& reg, LocationRegistry& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
-void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
+void SystemAffordanceResolver(entt::registry& reg, LocationRegistry& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue);
 
 // 🆕 행동 트리 실행 시스템
 void SystemBehaviorTree(entt::registry& reg);

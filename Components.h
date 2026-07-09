@@ -212,3 +212,10 @@ struct BehaviorTreeComp {
     std::unique_ptr<BT::BTNode> root_node;
 };
 
+//  시뮬레이션 전역 상수 설정 (shared_simulation_settings.json 바인딩용)
+struct SimulationSettings {
+    float npc_speed = 2.0f;
+    int ticks_per_game_hour = 200;
+};
+
+

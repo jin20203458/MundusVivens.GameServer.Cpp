@@ -5,7 +5,7 @@
 #include <cmath>
 
 //  생체 욕구 감쇠 시스템 (기존 SystemSurvivalOverride를 경량화)
-void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
+void SystemSurvivalOverride(entt::registry& reg, LocationRegistry& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     auto view = reg.view<NeedsComp, LocationComp, ToilComp, JobComp>();
     view.each([&](entt::entity entity, NeedsComp& needs, LocationComp& loc, ToilComp& toil, JobComp& job) {
         // 계획 수면/식사 여부 판별
@@ -37,7 +37,7 @@ void SystemSurvivalOverride(entt::registry& reg, SpatialHashGrid& grid, int curr
 }
 
 //  사물 상호작용 및 욕구 충전 시스템 (일반 계획 스케줄 전용으로 축소)
-void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
+void SystemAffordanceResolver(entt::registry& reg, LocationRegistry& grid, int current_tick, MundusVivens::AsyncGrpcClient& client, GrpcResultQueue& grpc_queue) {
     // 1. 점유 가구 상태 예외 보정
     auto furn_view = reg.view<AffordanceComp>();
     furn_view.each([&](entt::entity furn_ent, AffordanceComp& aff) {
@@ -92,7 +92,7 @@ void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int cu
                         const auto& id = reg.get<IdentityComp>(needs.occupied_furniture);
                         if (id.display_name.find("임시") != std::string::npos) {
                             entt::entity temp_furn = needs.occupied_furniture;
-                            grid.Remove(temp_furn, reg.get<LocationComp>(temp_furn).zone_id);
+                            grid.RemoveEntity(temp_furn);
                             reg.destroy(temp_furn);
                             std::cout << "🔥 [야영 철거] 사용이 끝난 [" << id.display_name << "]을(를) 완전히 철거했습니다." << std::endl;
                         }
@@ -140,7 +140,7 @@ void SystemAffordanceResolver(entt::registry& reg, SpatialHashGrid& grid, int cu
                             auto& camp_aff = reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Sleep, entt::null);
                             camp_aff.is_temporary = true;
                         }
-                        grid.Insert(camp_ent, loc.zone_id);
+                        grid.UpdateEntityPosition(camp_ent, loc.x, loc.z, reg);
                         target_furn = camp_ent;
                     }
 

@@ -3,6 +3,7 @@
 #include "GrpcResultQueue.h"
 #include "Components.h"
 #include "Systems.h"
+#include "LocationRegistry.h"
 #include <iostream>
 #include <cmath>
 
@@ -217,7 +218,7 @@ public:
                 auto& camp_aff = reg.emplace<AffordanceComp>(camp_ent, aff_type, entt::null);
                 camp_aff.is_temporary = true;
                 
-                ctx.spatial_grid->Insert(camp_ent, loc.zone_id);
+                ctx.location_registry->UpdateEntityPosition(camp_ent, loc.x, loc.z, reg);
                 
                 job.target_location = loc.location_name;
                 job.target_x = loc.x;
@@ -335,7 +336,7 @@ public:
                     camp_aff.is_temporary = true;
                     std::cout << "⛺ [BT 야영 스폰] " << identity.display_name << "이(가) [임시 야영지]를 새로 구축합니다." << std::endl;
                 }
-                ctx.spatial_grid->Insert(camp_ent, loc.zone_id);
+                ctx.location_registry->UpdateEntityPosition(camp_ent, loc.x, loc.z, reg);
                 target_furn = camp_ent;
             }
             
@@ -424,7 +425,7 @@ public:
                 if (aff.is_temporary) {
                     entt::entity temp_furn = needs.occupied_furniture;
                     std::string furn_name = reg.all_of<IdentityComp>(temp_furn) ? reg.get<IdentityComp>(temp_furn).display_name : "임시 사물";
-                    ctx.spatial_grid->Remove(temp_furn, reg.get<LocationComp>(temp_furn).zone_id);
+                    ctx.location_registry->RemoveEntity(temp_furn);
                     reg.destroy(temp_furn);
                     std::cout << "🔥 [BT 야영 철거] 사용 완료된 [" << furn_name << "]을(를) 철거했습니다." << std::endl;
                 }

@@ -28,7 +28,11 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
 
                 if (!pathfinding.waypoints.empty()) {
                     auto& vel = reg.get_or_emplace<VelocityComp>(entity);
-                    vel.speed = 2.0f; // 기본 속도 2.0 m/s
+                    float move_speed = 2.0f;
+                    if (reg.ctx().contains<SimulationSettings>()) {
+                        move_speed = reg.ctx().get<SimulationSettings>().npc_speed;
+                    }
+                    vel.speed = move_speed;
                     
                     if (auto* ident = reg.try_get<IdentityComp>(entity)) {
                         std::cout << "🧭 [경로 생성] " << ident->display_name << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z << ")로의 경로를 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
@@ -49,7 +53,7 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
 }
 
 // 🆕 Axis 3: 실시간 20Hz 이동 처리 시스템
-void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick) {
+void SystemMovement(entt::registry& reg, LocationRegistry& grid, int tick) {
     constexpr float dt = 0.05f; // 20Hz 기준 dt
 
     auto view = reg.view<LocationComp, ToilComp, PathfindingComp, VelocityComp, JobComp, IdentityComp>();
@@ -57,21 +61,12 @@ void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick) {
         if (toil.state == ToilState::Moving) {
             if (path.current_waypoint_index >= path.waypoints.size()) {
                 // 더 이상 갈 노드가 없음 -> 목적지 도착
-                std::string old_loc = loc.location_name;
-                uint32_t old_zone = loc.zone_id;
-                uint32_t new_zone = grid.GetOrCreateZoneId(job.target_location);
-
-                loc.location_name = job.target_location;
-                loc.zone_id = new_zone;
                 loc.x = job.target_x;
                 loc.y = job.target_y;
                 loc.z = job.target_z;
 
-                if (new_zone != old_zone) {
-                    grid.Move(entity, old_zone, new_zone);
-                    std::cout << "🏃 [실시간 이동 완료] " << identity.display_name << " 이동: [" << old_loc << "] ➔ [" 
-                              << job.target_location << "] (행동: " << job.intent << ")" << std::endl;
-                }
+                // 위치 등록기를 통해 위치 및 소속 구역 갱신
+                grid.UpdateEntityPosition(entity, loc.x, loc.z, reg);
 
                 toil.state = ToilState::Working;
                 toil.duration_ticks = 3;
@@ -87,7 +82,10 @@ void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick) {
                 path.current_waypoint_index = 0;
                 
                 std::cout << "🏁 [목적지 도착] " << identity.display_name 
-                          << "이(가) 목적지에 도착하여 작업을 시작합니다." << std::endl;
+                          << "이(가) 목적지 [" << loc.location_name << "]에 도착하여 작업을 시작합니다." << std::endl;
+                std::cout << "🔄 [Toil Transition] " << identity.display_name 
+                          << ": Moving ➔ Working (물리 도달 완료, Job ID: " << job.job_id 
+                          << ", Intent: " << job.intent << ")" << std::endl;
                 return;
             }
 
@@ -122,6 +120,8 @@ void SystemMovement(entt::registry& reg, SpatialHashGrid& grid, int tick) {
                 loc.x += vel.dir_x * move_step;
                 loc.z += vel.dir_z * move_step;
             }
+            // 이동 후 실시간으로 위치 등록기 갱신
+            grid.UpdateEntityPosition(entity, loc.x, loc.z, reg);
         } else {
             // Moving이 아닌 경우 속도 리셋
             vel.dir_x = 0.0f;

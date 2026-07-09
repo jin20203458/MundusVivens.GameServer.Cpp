@@ -1,6 +1,9 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <fstream>
+#include <sstream>
+
 #include <random>
 #include <vector>
 #include <string>
@@ -15,7 +18,7 @@
 #include "AsyncGrpcClient.h"
 #include "GameLoop.h"
 #include "Components.h"
-#include "SpatialHashGrid.h"
+#include "LocationRegistry.h"
 #include "Systems.h"
 #include "BehaviorTrees.h"
 #include "TcpServer.h"
@@ -136,7 +139,67 @@ int main() {
     }
 
     entt::registry registry;
-    SpatialHashGrid spatial_grid;
+
+    // [Smell #5 해결] 시뮬레이션 설정 파일 로드 및 컨텍스트에 등록
+    SimulationSettings sim_settings;
+    {
+        std::ifstream file("shared_simulation_settings.json");
+        if (!file.is_open()) {
+            std::cerr << "⚠️ [Settings] shared_simulation_settings.json을 찾을 수 없어 기본 상수를 사용합니다 (Speed: 2.0, Ticks/Hour: 200)." << std::endl;
+        } else {
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.find("NPC_SPEED") != std::string::npos) {
+                    size_t colon = line.find(':');
+                    if (colon != std::string::npos) {
+                        size_t comma = line.find(',', colon);
+                        std::string val_str = line.substr(colon + 1, (comma != std::string::npos ? comma : line.size()) - colon - 1);
+                        try {
+                            sim_settings.npc_speed = std::stof(val_str);
+                        } catch (...) {
+                            std::cerr << "❌ [Settings 에러] NPC_SPEED 파싱 실패" << std::endl;
+                        }
+                    }
+                } else if (line.find("TICKS_PER_GAME_HOUR") != std::string::npos) {
+                    size_t colon = line.find(':');
+                    if (colon != std::string::npos) {
+                        size_t comma = line.find(',', colon);
+                        std::string val_str = line.substr(colon + 1, (comma != std::string::npos ? comma : line.size()) - colon - 1);
+                        try {
+                            sim_settings.ticks_per_game_hour = std::stoi(val_str);
+                        } catch (...) {
+                            std::cerr << "❌ [Settings 에러] TICKS_PER_GAME_HOUR 파싱 실패" << std::endl;
+                        }
+                    }
+                }
+            }
+            std::cout << "⚙️ [Settings] shared_simulation_settings.json 로드 완료: NPC_SPEED = " 
+                      << sim_settings.npc_speed << ", TICKS_PER_GAME_HOUR = " << sim_settings.ticks_per_game_hour << std::endl;
+        }
+    }
+
+    // [Smell #5 해결] C#-C++ 설정 동등성(Handshake Validation) 검증
+    if (std::abs(sim_settings.npc_speed - bootstrap.npc_speed) > 0.001f || 
+        sim_settings.ticks_per_game_hour != static_cast<int>(bootstrap.ticks_per_game_hour)) {
+        std::cerr << "\n====================================================" << std::endl;
+        std::cerr << "❌ [FATAL] [시뮬레이션 설정 불일치 감지] C++ 게임서버와 C# AI서버의 물리 상수가 일치하지 않습니다!" << std::endl;
+        std::cerr << "   - C++ 로컬 설정: NPC_SPEED = " << sim_settings.npc_speed 
+                  << ", TICKS_PER_GAME_HOUR = " << sim_settings.ticks_per_game_hour << std::endl;
+        std::cerr << "   - C# 원격 설정: NPC_SPEED = " << bootstrap.npc_speed 
+                  << ", TICKS_PER_GAME_HOUR = " << bootstrap.ticks_per_game_hour << std::endl;
+        std::cerr << "📢 [조치 사항] C++ 측 shared_simulation_settings.json 파일이 빌드 과정에서 동기화되지 않았거나 복사 오류일 가능성이 있습니다." << std::endl;
+        std::cerr << "====================================================\n" << std::endl;
+        
+        grpc_ctx.stop();
+        if (grpc_thread.joinable()) {
+            grpc_thread.join();
+        }
+        return 1; // 기동 중단 (Fatal Assertion Crash)
+    }
+
+    registry.ctx().emplace<SimulationSettings>(sim_settings);
+
+    LocationRegistry location_registry;
     GridMap grid_map;
     grid_map.LoadMap(bootstrap.locations);
 
@@ -176,9 +239,9 @@ int main() {
     // 부트스트랩 데이터 컨텍스트에 등록 (로그인 시 클라이언트에 전달하기 위함)
     registry.ctx().emplace<MundusVivens::WorldBootstrapData>(bootstrap);
 
-    // 부트스트랩 위치 데이터 캐싱 및 Spatial Grid에 미리 Zone 생성
+    // 부트스트랩 위치 데이터 캐싱 및 위치 등록기에 거점 등록
     for (const auto& loc : bootstrap.locations) {
-        spatial_grid.GetOrCreateZoneId(loc.name);
+        location_registry.RegisterLocation(loc.name, loc.x, loc.z);
     }
 
     //  부트스트랩 가구(사물) 데이터 로드 및 엔티티 생성
@@ -188,15 +251,14 @@ int main() {
         
         registry.emplace<IdentityComp>(furn_entity, 0u, furn.name);
         
-        uint32_t zone_id = spatial_grid.GetOrCreateZoneId(furn.parent_location);
-        registry.emplace<LocationComp>(furn_entity, zone_id, furn.parent_location, furn.x, furn.y, furn.z);
+        registry.emplace<LocationComp>(furn_entity, 0u, furn.parent_location, furn.x, furn.y, furn.z);
         
         AffordanceType aff_type = static_cast<AffordanceType>(furn.type);
         auto& aff = registry.emplace<AffordanceComp>(furn_entity, aff_type, entt::null);
         aff.is_temporary = furn.is_temporary;
         
-        // 가구를 SpatialGrid 공간에 등록
-        spatial_grid.Insert(furn_entity, zone_id);
+        // 가구를 LocationRegistry에 좌표 기반으로 등록
+        location_registry.UpdateEntityPosition(furn_entity, furn.x, furn.z, registry);
     }
 
     // NPC 엔티티 생성
@@ -212,7 +274,7 @@ int main() {
         // 역방향 ID 인덱스 맵 등록
         entity_index.by_npc_id[agent.agent_id] = entity;
 
-        // 🆕 동적 에이전트 ID 매핑 테이블 빌드
+        //  동적 에이전트 ID 매핑 테이블 빌드
         id_mapper.numeric_to_string[agent.agent_id] = agent.string_id;
         id_mapper.string_to_numeric[agent.string_id] = agent.agent_id;
         id_mapper.string_to_numeric[agent.name] = agent.agent_id;
@@ -226,9 +288,8 @@ int main() {
         std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
         id_mapper.string_to_numeric[lower_name] = agent.agent_id;
 
-        uint32_t zone_id = spatial_grid.GetOrCreateZoneId(agent.location);
-        auto& loc_comp = registry.emplace<LocationComp>(entity, zone_id, agent.location, agent.x, agent.y, agent.z);
-        spatial_grid.Insert(entity, zone_id);
+        auto& loc_comp = registry.emplace<LocationComp>(entity, 0u, agent.location, agent.x, agent.y, agent.z);
+        location_registry.UpdateEntityPosition(entity, agent.x, agent.z, registry);
 
         // Find location info in bootstrap data to populate hierarchy/type
         auto loc_it = std::find_if(bootstrap.locations.begin(), bootstrap.locations.end(), [&](const MundusVivens::LocationData& loc_data) {
@@ -242,7 +303,7 @@ int main() {
 
         registry.emplace<ActivityComp>(entity, agent.activity);
 
-        // 🆕 감정 정수 ID 동적 매핑 및 초기화
+        //  감정 정수 ID 동적 매핑 및 초기화
         if (emotion_registry.name_to_id.find(agent.emotion) == emotion_registry.name_to_id.end()) {
             emotion_registry.name_to_id[agent.emotion] = next_emo_id;
             emotion_registry.decay_ticks_table.push_back(3); // 기본 3틱
@@ -270,7 +331,7 @@ int main() {
         registry.emplace<JobComp>(entity);
         registry.emplace<ToilComp>(entity);
 
-        // 🆕 생체 욕구 컴포넌트 추가 및 난수(50~90) 스태거링
+        //  생체 욕구 컴포넌트 추가 및 난수(50~90) 스태거링
         auto& needs = registry.emplace<NeedsComp>(entity);
         std::random_device rd_needs;
         std::mt19937 gen_needs(rd_needs());
@@ -278,13 +339,13 @@ int main() {
         needs.hunger = dist_needs(gen_needs);
         needs.fatigue = dist_needs(gen_needs);
 
-        // 🆕 행동 트리(BT) 컴포넌트 추가 및 초기화
+        //  행동 트리(BT) 컴포넌트 추가 및 초기화
         auto& bt = registry.emplace<BehaviorTreeComp>(entity);
         bt.root_node = BT::CreateSurvivalTree();
 
         registry.emplace<LastSyncedComp>(entity, agent.location, agent.emotion, agent.activity);
 
-        // 🆕 성격 및 관계 데이터 초기 연동
+        //  성격 및 관계 데이터 초기 연동
         registry.emplace<PersonalityComp>(entity, agent.extroversion);
         auto& rel_cache = registry.emplace<RelationshipCacheComp>(entity);
         for (const auto& rel_snap : agent.relationships) {
@@ -309,8 +370,8 @@ int main() {
     int tick = 0; // 동기화 완료된 마지막 틱
     GrpcResultQueue grpc_queue;
 
-    // 🆕 행동 트리(BT) 실행을 위한 전역 컨텍스트 등록
-    registry.ctx().emplace<BT::BTContext>(&async_client, &grpc_queue, &spatial_grid, &tick);
+    //  행동 트리(BT) 실행을 위한 전역 컨텍스트 등록
+    registry.ctx().emplace<BT::BTContext>(&async_client, &grpc_queue, &location_registry, &tick);
 
     bool is_first_loop = true;
     bool is_tick_sync_pending = false;
@@ -329,10 +390,10 @@ int main() {
         grpc_queue.Drain(registry, tcp_server, async_client);
 
         // 2. 연결 끊김 감지 및 대화 즉각 정리 시스템
-        SystemCleanupDisconnectedPlayerDialogues(registry, spatial_grid, tcp_server, async_client, grpc_queue);
+        SystemCleanupDisconnectedPlayerDialogues(registry, location_registry, tcp_server, async_client, grpc_queue);
 
         // 3. 매 프레임(50ms)마다 플레이어 패킷 명령어 즉각 처리 (이동, 대화 메시지 등)
-        SystemPlayerCommands(registry, spatial_grid, tcp_server, async_client, tick, grpc_queue);
+        SystemPlayerCommands(registry, location_registry, tcp_server, async_client, tick, grpc_queue);
 
         // 4. 틱 동기화가 완료된 경우, 메인 프레임 동기화 타이밍에 맞추어 모든 시스템 결정론적 순차 실행 (Task G)
         if (tick_synced_ready.exchange(false)) {
@@ -341,7 +402,7 @@ int main() {
             
             std::cout << "⏱️ [틱 동기화 완료] 틱 번호 " << tick << "가 C# 서버에 동기화되었습니다. 메시지: " << temp_message << std::endl;
 
-            // 🆕 관계 변동치(RelationshipDelta) 반영
+            //  관계 변동치(RelationshipDelta) 반영
             for (const auto& delta : temp_relationship_deltas) {
                 auto it = entity_index.by_npc_id.find(delta.from_agent_id);
                 if (it != entity_index.by_npc_id.end()) {
@@ -372,7 +433,7 @@ int main() {
                 });
             }
 
-            // 🚀 Axis 2: C# 서버에 Pending Job 요청
+            // C# 서버에 Pending Job 요청
             async_client.GetPendingJobsAsync(tick, [&grpc_queue, &entity_index](bool success, const std::vector<MundusVivens::MundusVivensClient::JobPayload>& jobs) {
                 grpc_queue.Push([success, jobs, &entity_index](entt::registry& inner_reg, TcpServer& inner_tcp, MundusVivens::AsyncGrpcClient& inner_client) {
                     if (success) {
@@ -400,7 +461,7 @@ int main() {
                                     toil.state = ToilState::Idle;
                                     toil.duration_ticks = 0;
 
-                                    // 🆕 새 스케줄(Job)이 수신되었으므로, 대기 중이던 ScheduleWait BusyTag 해제
+                                    //  새 스케줄(Job)이 수신되었으므로, 대기 중이던 ScheduleWait BusyTag 해제
                                     if (inner_reg.all_of<BusyTag>(target_ent)) {
                                         auto& busy = inner_reg.get<BusyTag>(target_ent);
                                         if (busy.reason == BusyReason::ScheduleWait) {
@@ -414,29 +475,34 @@ int main() {
                 });
             });
 
-            // 🚀 Axis 2: Job 상태 머신 구동
-            SystemJobDriver(registry, spatial_grid, tick, async_client, grpc_queue);
+            // Job 상태 머신 구동
+            SystemJobDriver(registry, location_registry, tick, async_client, grpc_queue);
 
             // 동일 공간 인접 검사 및 새 대화 비동기 트리거
-            SystemSocialInteraction(registry, spatial_grid, tcp_server, async_client, tick, gen, dis, grpc_queue);
+            SystemSocialInteraction(registry, location_registry, tcp_server, async_client, tick, gen, dis, grpc_queue);
 
             // 네트워크 동기화
             SystemNetworkSync(registry, async_client, grpc_queue);
         }
 
-        // 🚀 Axis 3: 경로 탐색 및 실시간 이동 구동 (20Hz)
+        // 경로 탐색 및 실시간 이동 구동 (20Hz)
         SystemBusyAmbient(registry, 0.05f);
-        SystemBehaviorTree(registry); // 🆕 행동 트리(BT) 엔진 실행
-        SystemSurvivalOverride(registry, spatial_grid, tick, async_client, grpc_queue); // 🆕 생체 위기 감지 및 인터럽트
+        SystemBehaviorTree(registry); //  행동 트리(BT) 엔진 실행
+        SystemSurvivalOverride(registry, location_registry, tick, async_client, grpc_queue); //  생체 위기 감지 및 인터럽트
         SystemPathfinding(registry, grid_map);
-        SystemMovement(registry, spatial_grid, tick);
-        SystemAffordanceResolver(registry, spatial_grid, tick, async_client, grpc_queue); // 🆕 사물 상호작용 및 충전
+        SystemMovement(registry, location_registry, tick);
+        SystemAffordanceResolver(registry, location_registry, tick, async_client, grpc_queue); //  사물 상호작용 및 충전
 
         // 월드 상태 스냅샷 클라이언트 브로드캐스트 (20Hz)
         SystemBroadcastWorldSnapshot(registry, tcp_server, tick);
 
-        // 4. 10초마다(물리 틱 200회당 1회) C# AI 서버와 논리 틱 동기화 요청
-        if (physical_tick % 200 == 0) {
+        int ticks_per_hour = 200;
+        if (registry.ctx().contains<SimulationSettings>()) {
+            ticks_per_hour = registry.ctx().get<SimulationSettings>().ticks_per_game_hour;
+        }
+
+        // 4. C# AI 서버와 논리 틱 동기화 요청
+        if (physical_tick % ticks_per_hour == 0) {
             if (!is_tick_sync_pending) {
                 is_tick_sync_pending = true;
                 int target_tick = tick + 1;

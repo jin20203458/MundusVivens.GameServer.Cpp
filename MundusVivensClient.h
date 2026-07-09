@@ -100,6 +100,8 @@ struct WorldBootstrapData {
     std::vector<LocationData> locations;
     std::vector<InitialAgentState> agents;
     std::vector<FurnitureData> furniture;
+    float npc_speed = 0.0f;
+    uint32_t ticks_per_game_hour = 0;
 };
 
 //  에이전트의 실시간 상태를 조회할 때 반환되는 구조체
@@ -130,8 +132,6 @@ public:
     // C# AI 서버의 공유 gRPC 채널을 전달받아 클라이언트를 생성합니다.
     MundusVivensClient(std::shared_ptr<grpc::Channel> channel);
 
-    // NPC 간 대화를 트리거합니다.
-    DialogueResult TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b);
 
     // [미래 준비용] 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
     // 향후 유니티 ◄► C++ 간의 TCP 브릿지 패킷(예: CS_INSPECT_NPC_MEMORIES) 추가 시 활성화할 예정입니다.
@@ -145,8 +145,6 @@ public:
     //  에이전트 상태 배치 업데이트 RPC 
     bool BatchUpdateAgentStatus(const std::vector<AgentStatusUpdate>& updates, int32_t& out_updated_count, std::string& out_message);
 
-    // C++ 게임 서버의 틱(시간 흐름) 진행을 C# AI 서버에 알립니다.
-    bool ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<uint32_t>& out_busy_agent_ids);
 
     //  월드 부트스트랩 데이터 조회
     WorldBootstrapData GetWorldBootstrap();
@@ -155,8 +153,7 @@ public:
 
     using JobPayload = MundusVivens::JobPayload;
 
-    std::vector<JobPayload> GetPendingJobs(int32_t current_tick);
-    bool ReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, JobPayload& out_new_job);
+
 
 private:
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;

@@ -9,78 +9,6 @@ namespace MundusVivens {
         stub_ = mundusvivens::MundusVivensGrpc::NewStub(channel);
     }
 
-    DialogueResult MundusVivensClient::TriggerDialogue(uint32_t agent_id_a, uint32_t agent_id_b) {
-        // 1. 원격 서버로 송신할 요청(Request) 패킷 데이터 설정
-        mundusvivens::TriggerDialogueRequest request;
-        request.set_agent_id_a(agent_id_a);
-        request.set_agent_id_b(agent_id_b);
-
-        mundusvivens::TriggerDialogueResponse response;
-        grpc::ClientContext context; // RPC 호출의 타임아웃, 메타데이터 등을 관리하는 컨텍스트 객체
-
-        // 2. 스텁 포인터를 통해 C# 서버의 원격 함수를 호출 (네트워크 송수신 발생)
-        grpc::Status status = stub_->TriggerDialogue(&context, request, &response);
-
-        // 3. 수신된 바이너리 패킷을 C++ 전용 구조체(DialogueResult)로 복사 및 반환
-        DialogueResult result;
-        if (status.ok()) {
-            result.task_id = response.task_id();
-            result.dialogue_summary = response.dialogue_summary();
-
-            // protobuf가 뱉은 가변 배열(Repeated Field) 요소를 C++ std::vector에 순차적으로 밀어 넣음
-            for (int i = 0; i < response.dialogue_lines_size(); ++i) {
-                result.dialogue_lines.push_back(response.dialogue_lines(i));
-            }
-
-            //  구조화된 대화 데이터 바인딩 추가
-            for (int i = 0; i < response.structured_lines_size(); ++i) {
-                const auto& proto_line = response.structured_lines(i);
-                DialogueLine line;
-                line.speaker_id = proto_line.speaker_id();
-                line.speaker_name = proto_line.speaker_name();
-                line.text = proto_line.text();
-                result.structured_lines.push_back(line);
-            }
-
-            //  감정 업데이트 정보 바인딩
-            for (int i = 0; i < response.emotion_updates_size(); ++i) {
-                const auto& proto_update = response.emotion_updates(i);
-                AgentEmotionUpdate update;
-                update.agent_id = proto_update.agent_id();
-                update.new_emotion = proto_update.new_emotion();
-                update.intensity = static_cast<int>(proto_update.intensity());
-                update.category = static_cast<uint8_t>(proto_update.category());
-                result.emotion_updates.push_back(update);
-            }
-
-            //  다음 행동 계획 바인딩
-            for (int i = 0; i < response.next_jobs_size(); ++i) {
-                const auto& proto_job = response.next_jobs(i);
-                JobPayload job;
-                job.npc_id = proto_job.npc_id();
-                job.job_id = proto_job.job_id();
-                job.target_location = proto_job.target_location().name();
-                job.target_x = proto_job.target_location().position().x();
-                job.target_y = proto_job.target_location().position().y();
-                job.target_z = proto_job.target_location().position().z();
-                job.intent = proto_job.intent();
-                job.target_agent_id = proto_job.target_agent_id();
-                job.priority = proto_job.priority();
-                job.category = static_cast<uint8_t>(proto_job.category());
-                result.next_jobs.push_back(job);
-            }
-            //  키워드 바인딩
-            for (int i = 0; i < response.keywords_size(); ++i) {
-                result.keywords.push_back(response.keywords(i));
-            }
-        }
-        else {
-            std::cerr << "[대화 트리거 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
-            result.dialogue_summary = "gRPC 에러 발생: " + status.error_message();
-        }
-
-        return result;
-    }
 
     AgentStatus MundusVivensClient::GetAgentStatus(uint32_t agent_id) {
         // 1. 특정 에이전트 식별자(ID)를 요청 패킷에 세팅
@@ -177,31 +105,6 @@ namespace MundusVivens {
         }
     }
 
-    bool MundusVivensClient::ProcessWorldTick(int32_t tick_number, std::string& out_message, std::vector<uint32_t>& out_busy_agent_ids) {
-        // 1. C++ 메인 루프에서 전진한 현재의 월드 틱 넘버를 패킷에 세팅
-        mundusvivens::ProcessWorldTickRequest request;
-        request.set_tick_number(tick_number);
-
-        mundusvivens::ProcessWorldTickResponse response;
-        grpc::ClientContext context;
-
-        // 2. AI 서버에 글로벌 시간(Tick) 동기화 신호를 전송
-        grpc::Status status = stub_->ProcessWorldTick(&context, request, &response);
-
-        // 3. 시간 동기화 완료 여부 반환
-        if (status.ok()) {
-            out_message = response.message();
-            out_busy_agent_ids.clear();
-            for (int i = 0; i < response.busy_agent_ids_size(); ++i) {
-                out_busy_agent_ids.push_back(response.busy_agent_ids(i));
-            }
-            return response.success();
-        }
-        else {
-            out_message = "gRPC 에러 발생: " + status.error_message();
-            return false;
-        }
-    }
 
 
     WorldBootstrapData MundusVivensClient::GetWorldBootstrap() {
@@ -260,6 +163,8 @@ namespace MundusVivens {
                 furn.is_temporary = proto_furn.is_temporary();
                 result.furniture.push_back(furn);
             }
+            result.npc_speed = response.npc_speed();
+            result.ticks_per_game_hour = response.ticks_per_game_hour();
         }
         else {
             std::cerr << "[부트스트랩 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
@@ -269,71 +174,6 @@ namespace MundusVivens {
 
 
 
-    std::vector<MundusVivensClient::JobPayload> MundusVivensClient::GetPendingJobs(int32_t current_tick) {
-        mundusvivens::GetPendingJobsRequest request;
-        request.set_current_tick(current_tick);
 
-        mundusvivens::GetPendingJobsResponse response;
-        grpc::ClientContext context;
-
-        grpc::Status status = stub_->GetPendingJobs(&context, request, &response);
-
-        std::vector<JobPayload> result;
-        if (status.ok()) {
-            for (int i = 0; i < response.jobs_size(); ++i) {
-                const auto& proto_job = response.jobs(i);
-                JobPayload job;
-                job.npc_id = proto_job.npc_id();
-                job.job_id = proto_job.job_id();
-                job.target_location = proto_job.target_location().name();
-                job.target_x = proto_job.target_location().position().x();
-                job.target_y = proto_job.target_location().position().y();
-                job.target_z = proto_job.target_location().position().z();
-                job.intent = proto_job.intent();
-                job.target_agent_id = proto_job.target_agent_id();
-                job.priority = proto_job.priority();
-                job.category = static_cast<uint8_t>(proto_job.category());
-                result.push_back(job);
-            }
-        } else {
-            std::cerr << "[Pending Jobs 조회 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
-        }
-        return result;
-    }
-
-    bool MundusVivensClient::ReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status_val, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, JobPayload& out_new_job) {
-        mundusvivens::ReportJobStatusRequest request;
-        request.set_npc_id(npc_id);
-        request.set_job_id(job_id);
-        request.set_status(static_cast<mundusvivens::ReportJobStatusRequest_JobStatus>(status_val));
-        request.set_reason_code(reason_code);
-        request.set_detailed_context(detailed_context);
-        request.set_current_tick(current_tick);
-
-        mundusvivens::ReportJobStatusResponse response;
-        grpc::ClientContext context;
-
-        grpc::Status status = stub_->ReportJobStatus(&context, request, &response);
-
-        if (status.ok() && response.success()) {
-            if (response.has_new_job()) {
-                const auto& proto_job = response.new_job();
-                out_new_job.npc_id = proto_job.npc_id();
-                out_new_job.job_id = proto_job.job_id();
-                out_new_job.target_location = proto_job.target_location().name();
-                out_new_job.target_x = proto_job.target_location().position().x();
-                out_new_job.target_y = proto_job.target_location().position().y();
-                out_new_job.target_z = proto_job.target_location().position().z();
-                out_new_job.intent = proto_job.intent();
-                out_new_job.target_agent_id = proto_job.target_agent_id();
-                out_new_job.priority = proto_job.priority();
-                out_new_job.category = static_cast<uint8_t>(proto_job.category());
-            }
-            return true;
-        } else {
-            std::cerr << "[Job 상태 보고 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
-            return false;
-        }
-    }
 
 } // namespace MundusVivens

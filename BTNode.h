@@ -7,14 +7,14 @@
 // Forward declarations
 namespace MundusVivens { class AsyncGrpcClient; }
 class GrpcResultQueue;
-class SpatialHashGrid;
+class LocationRegistry;
 
 namespace BT {
 
 struct BTContext {
     MundusVivens::AsyncGrpcClient* client = nullptr;
     GrpcResultQueue* grpc_queue = nullptr;
-    SpatialHashGrid* spatial_grid = nullptr;
+    LocationRegistry* location_registry = nullptr;
     int* current_tick = nullptr;
 };
 

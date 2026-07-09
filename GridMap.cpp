@@ -3,6 +3,8 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 GridMap::GridMap() {
     grid_.assign(WIDTH * HEIGHT, true);
@@ -16,10 +18,82 @@ void GridMap::LoadMap(const std::vector<MundusVivens::LocationData>& locations) 
                   << loc.x << ", " << loc.z << ")" << std::endl;
     }
 
-    // 2. 간단한 장애물 배치 (예: 중앙부 수직 벽 x=45, z=30~70)
-    for (int z = 30; z <= 70; ++z) {
-        grid_[45 * HEIGHT + z] = false;
+    // 2. 외부 JSON 파일로부터 장애물 목록 로드
+    const std::string filename = "collision_obstacles.json";
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        // 파일이 없으면 기본 장애물(x=45, z=30~70 수직 벽) 생성
+        std::cout << "⚠️ [GridMap] " << filename << "이 존재하지 않아 기본 장애물(x=45, z=30~70 장벽)을 생성합니다." << std::endl;
+        std::ofstream outfile(filename);
+        if (outfile.is_open()) {
+            outfile << "[\n  { \"min_x\": 45, \"min_z\": 30, \"max_x\": 45, \"max_z\": 70 }\n]\n";
+            outfile.close();
+        }
+        
+        for (int z = 30; z <= 70; ++z) {
+            grid_[45 * HEIGHT + z] = false;
+        }
+        return;
     }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = buffer.str();
+    file.close();
+
+    // 초간단 JSON 파서 (정규식이나 라이브러리 없이 토큰 분리)
+    // 패턴: {"min_x": X, "min_z": Z, "max_x": X, "max_z": Z}
+    size_t pos = 0;
+    int loaded_count = 0;
+    while ((pos = content.find('{', pos)) != std::string::npos) {
+        size_t end_pos = content.find('}', pos);
+        if (end_pos == std::string::npos) break;
+
+        std::string entry = content.substr(pos, end_pos - pos);
+        pos = end_pos + 1;
+
+        auto get_value = [&](const std::string& key) -> int {
+            size_t kpos = entry.find(key);
+            if (kpos == std::string::npos) return -1;
+            size_t cpos = entry.find(':', kpos);
+            if (cpos == std::string::npos) return -1;
+            
+            // 콜론 다음 숫자 시작점 탐색
+            size_t start = cpos + 1;
+            while (start < entry.size() && (std::isspace(entry[start]) || entry[start] == '"')) {
+                start++;
+            }
+            size_t end = start;
+            while (end < entry.size() && (std::isdigit(entry[end]) || entry[end] == '-')) {
+                end++;
+            }
+            if (start == end) return -1;
+            return std::stoi(entry.substr(start, end - start));
+        };
+
+        int min_x = get_value("min_x");
+        int min_z = get_value("min_z");
+        int max_x = get_value("max_x");
+        int max_z = get_value("max_z");
+
+        if (min_x >= 0 && min_z >= 0 && max_x >= 0 && max_z >= 0) {
+            // 바운더리 클램핑
+            min_x = std::clamp(min_x, 0, WIDTH - 1);
+            max_x = std::clamp(max_x, 0, WIDTH - 1);
+            min_z = std::clamp(min_z, 0, HEIGHT - 1);
+            max_z = std::clamp(max_z, 0, HEIGHT - 1);
+
+            for (int x = min_x; x <= max_x; ++x) {
+                for (int z = min_z; z <= max_z; ++z) {
+                    grid_[x * HEIGHT + z] = false;
+                }
+            }
+            std::cout << "🧱 [GridMap 장애물 로드] 사각형 영역: (" << min_x << ", " << min_z 
+                      << ") ~ (" << max_x << ", " << max_z << ")" << std::endl;
+            loaded_count++;
+        }
+    }
+    std::cout << "🧱 [GridMap] 총 " << loaded_count << "개의 동적 장애물 로드 완료." << std::endl;
 }
 
 bool GridMap::IsWalkable(int x, int z) const {
@@ -28,13 +102,17 @@ bool GridMap::IsWalkable(int x, int z) const {
 }
 
 bool GridMap::GetLocationCoords(const std::string& loc_name, float& out_x, float& out_z) const {
-    // C# 단에서 보내주는 "술집 (Tavern)" 등 한/영 혼용 표기 매핑을 위해 부분 문자열 비교 수행
+    auto it = location_coords_.find(loc_name);
+    if (it != location_coords_.end()) {
+        out_x = it->second.x;
+        out_z = it->second.z;
+        return true;
+    }
+    
+    std::cerr << "❌ [GridMap 에러] 거점 좌표 조회 실패: '" << loc_name << "'을 찾을 수 없습니다." << std::endl;
+    std::cerr << "📌 [GridMap 정보] 현재 등록된 거점 목록:" << std::endl;
     for (const auto& [name, coords] : location_coords_) {
-        if (loc_name.find(name) != std::string::npos || name.find(loc_name) != std::string::npos) {
-            out_x = coords.x;
-            out_z = coords.z;
-            return true;
-        }
+        std::cerr << "   - '" << name << "' (" << coords.x << ", " << coords.z << ")" << std::endl;
     }
     return false;
 }
@@ -67,6 +145,15 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
 
     // 목표 지점이 갈 수 없는 곳인 경우 바로 리턴
     if (!IsWalkable(ex, ez)) {
+        std::cerr << "⚠️ [A* 길찾기 실패] 목표지점 타일이 갈 수 없는 곳(장애물)입니다. 목적지: (" << ex << ", " << ez << ")" << std::endl;
+        std::cerr << "📌 [주변 타일 상태]:" << std::endl;
+        for (int nz = ez + 1; nz >= ez - 1; --nz) {
+            for (int nx = ex - 1; nx <= ex + 1; ++nx) {
+                if (nx == ex && nz == ez) std::cerr << " [X]"; // target
+                else std::cerr << " [" << (IsWalkable(nx, nz) ? "O" : "W") << "]";
+            }
+            std::cerr << std::endl;
+        }
         return path;
     }
 
@@ -144,6 +231,10 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
         }
         std::reverse(rev_path.begin(), rev_path.end());
         path = std::move(rev_path);
+    } else {
+        std::cerr << "⚠️ [A* 길찾기 실패] 시작지점에서 목적지로 도달하는 경로가 존재하지 않습니다." << std::endl;
+        std::cerr << "   - 시작: (" << sx << ", " << sz << ") [Walkable: " << (IsWalkable(sx, sz) ? "Yes" : "No") << "]" << std::endl;
+        std::cerr << "   - 목적: (" << ex << ", " << ez << ") [Walkable: " << (IsWalkable(ex, ez) ? "Yes" : "No") << "]" << std::endl;
     }
 
     return path;

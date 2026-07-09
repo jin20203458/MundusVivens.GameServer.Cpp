@@ -37,6 +37,17 @@ if (Test-Path $CsProto) {
     }
 }
 
+# 1.6. shared_simulation_settings.json 동기화
+$CsSettings = "../MundusVivens/shared_simulation_settings.json"
+$CppSettings = "shared_simulation_settings.json"
+
+if (Test-Path $CsSettings) {
+    if (-not (Test-Path $CppSettings) -or (Get-FileHash $CppSettings).Hash -ne (Get-FileHash $CsSettings).Hash) {
+        Copy-Item -Path $CsSettings -Destination $CppSettings -Force
+        Write-Host "🔄 [Settings Sync] shared_simulation_settings.json 파일이 동기화되었습니다." -ForegroundColor Green
+    }
+}
+
 # 2. 설치된 Visual Studio의 vcvars64.bat 경로 자동 탐색 (vswhere 활용)
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vcvars = $null

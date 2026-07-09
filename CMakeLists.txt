@@ -73,8 +73,8 @@ add_executable(MundusVivensGameServer
     MundusVivensClient.cpp
     MundusVivensClient.h
     Components.h
-    SpatialHashGrid.h
-    SpatialHashGrid.cpp
+    LocationRegistry.h
+    LocationRegistry.cpp
     GridMap.h
     GridMap.cpp
     Systems.h
