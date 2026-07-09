@@ -126,7 +126,8 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
         if (status.ok()) {
             result.task_id = response.task_id();
             result.dialogue_summary = response.dialogue_summary();
-            result.dialogue_lines.assign(response.dialogue_lines().begin(), response.dialogue_lines().end());
+            result.success = response.success();
+            result.error_message = response.error_message();
             result.structured_lines.reserve(response.structured_lines_size());
             for (int i = 0; i < response.structured_lines_size(); ++i) {
                 const auto& proto_line = response.structured_lines(i);
@@ -168,8 +169,8 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
             }
             on_complete(true, result);
         } else {
-            result.has_error = true;
-            result.dialogue_summary = "gRPC error: " + status.error_message();
+            result.success = false;
+            result.error_message = "gRPC error: " + status.error_message();
             on_complete(false, result);
         }
     } catch (const std::exception& e) {

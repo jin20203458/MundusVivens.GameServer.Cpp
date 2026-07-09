@@ -7,9 +7,12 @@
 #include <algorithm>
 #include "Components.h"
 
-struct Vector2f {
+struct LocationMeta {
     float x = 0.0f;
     float z = 0.0f;
+    LocationType type = LocationType::Unspecified;
+    uint32_t region_id = 0;
+    uint32_t territory_id = 0;
 };
 
 class LocationRegistry {
@@ -19,7 +22,9 @@ public:
 
     uint32_t GetOrCreateZoneId(const std::string& name);
 
-    void RegisterLocation(const std::string& name, float x, float z);
+    void RegisterLocation(const std::string& name, float x, float z,
+                           LocationType type = LocationType::Unspecified,
+                           uint32_t region_id = 0, uint32_t territory_id = 0);
 
     void UpdateEntityPosition(entt::entity e, float x, float z, entt::registry& reg);
     
@@ -35,7 +40,7 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, Vector2f> location_centers_;
+    std::unordered_map<std::string, LocationMeta> location_centers_;
     std::unordered_map<uint64_t, std::vector<entt::entity>> cell_entities_;
     std::unordered_map<entt::entity, uint64_t> entity_to_cell_;
     

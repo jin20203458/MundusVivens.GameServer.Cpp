@@ -11,8 +11,10 @@ uint32_t LocationRegistry::GetOrCreateZoneId(const std::string& name) {
     return zone_id;
 }
 
-void LocationRegistry::RegisterLocation(const std::string& name, float x, float z) {
-    location_centers_[name] = {x, z};
+void LocationRegistry::RegisterLocation(const std::string& name, float x, float z,
+                                        LocationType type, uint32_t region_id,
+                                        uint32_t territory_id) {
+    location_centers_[name] = {x, z, type, region_id, territory_id};
     // 거점 등록 시 Zone ID도 미리 매핑 생성
     GetOrCreateZoneId(name);
 }
@@ -63,6 +65,19 @@ void LocationRegistry::UpdateEntityPosition(entt::entity e, float x, float z, en
                       << " 이동: [" << loc.location_name << "] ➔ [" << resolved_loc << "]" << std::endl;
             loc.location_name = resolved_loc;
             loc.zone_id = resolved_zone;
+
+            // 새 구역의 정적 메타데이터 갱신 (type, region_id, territory_id)
+            auto meta_it = location_centers_.find(resolved_loc);
+            if (meta_it != location_centers_.end()) {
+                loc.type = meta_it->second.type;
+                loc.region_id = meta_it->second.region_id;
+                loc.territory_id = meta_it->second.territory_id;
+            } else {
+                // Wilderness 또는 미등록 구역: 기본값으로 초기화
+                loc.type = (resolved_loc == "Wilderness") ? LocationType::Wilderness : LocationType::Unspecified;
+                loc.region_id = 0;
+                loc.territory_id = 0;
+            }
         }
         
         // x, z도 일괄 동기화

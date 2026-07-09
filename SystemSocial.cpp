@@ -441,7 +441,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
                             }
                         }
 
-                        if (success && !result.has_error && all_valid) {
+                        if (success && result.success && all_valid) {
                             std::string participant_names = "";
                             for (auto ent : group_participants) {
                                 participant_names += reg.get<IdentityComp>(ent).display_name + " ";
@@ -450,16 +450,16 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
                             std::cout << "\n🔔 [비동기 대화 완료 수신] [" << zone_loc_name << "]에서 진행된 ("
                                       << participant_names << ")의 대화 완료!" << std::endl;
 
-                            if (result.dialogue_lines.empty()) {
-                                std::cerr << "❌ [대화 데이터 에러] 대화 수거에 성공했으나 대사 텍스트가 비어있습니다. 에러 요약: " 
+                            if (result.structured_lines.empty()) {
+                                std::cerr << "⚠️ [대화 데이터 알림] 대사가 비어있는 대화입니다. 요약: " 
                                           << result.dialogue_summary << std::endl;
                             } else {
                                 std::cout << "\n================== [ C++ AI 대화 요약 결과 리포트 ] ==================" << std::endl;
                                 std::cout << result.dialogue_summary << std::endl;
                                 std::cout << "==============================================================" << std::endl;
                                 std::cout << "\n[실시간 소문 유통 연극 대본 로그]" << std::endl;
-                                for (const auto& line : result.dialogue_lines) {
-                                    std::cout << line << std::endl;
+                                for (const auto& line : result.structured_lines) {
+                                    std::cout << line.speaker_name << ": " << line.text << std::endl;
                                 }
                                 std::cout << "==============================================================\n" << std::endl;
 
@@ -691,7 +691,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
                                 }
                             }
                         } else {
-                            std::cerr << "❌ [대화 요청 실패] 대화 완료 콜백 수신 실패 또는 취소됨." << std::endl;
+                            std::cerr << "❌ [대화 요청 실패] 원인: " << result.error_message << std::endl;
                             for (auto ent : group_participants) {
                                 if (reg.valid(ent)) {
                                     reg.get<ActivityComp>(ent).current_activity = "대기";

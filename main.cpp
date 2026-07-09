@@ -241,7 +241,14 @@ int main() {
 
     // 부트스트랩 위치 데이터 캐싱 및 위치 등록기에 거점 등록
     for (const auto& loc : bootstrap.locations) {
-        location_registry.RegisterLocation(loc.name, loc.x, loc.z);
+        location_registry.RegisterLocation(
+            loc.name,
+            loc.x,
+            loc.z,
+            static_cast<LocationType>(loc.type),
+            loc.region_id,
+            loc.territory_id
+        );
     }
 
     //  부트스트랩 가구(사물) 데이터 로드 및 엔티티 생성
@@ -276,30 +283,24 @@ int main() {
 
         //  동적 에이전트 ID 매핑 테이블 빌드
         id_mapper.numeric_to_string[agent.agent_id] = agent.string_id;
-        id_mapper.string_to_numeric[agent.string_id] = agent.agent_id;
-        id_mapper.string_to_numeric[agent.name] = agent.agent_id;
         
-        // 영어 식별자 및 이름의 소문자 버전도 추가 지원
-        std::string lower_string_id = agent.string_id;
-        std::transform(lower_string_id.begin(), lower_string_id.end(), lower_string_id.begin(), ::tolower);
-        id_mapper.string_to_numeric[lower_string_id] = agent.agent_id;
+        // 헬퍼 람다: 대소문자 변환 시 변화가 있는 경우(영문 대문자 포함 등)에만 2차 등록
+        auto register_alias = [&](const std::string& alias) {
+            if (alias.empty()) return;
+            id_mapper.string_to_numeric[alias] = agent.agent_id;
+            
+            std::string lower = alias;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower != alias) {
+                id_mapper.string_to_numeric[lower] = agent.agent_id;
+            }
+        };
 
-        std::string lower_name = agent.name;
-        std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-        id_mapper.string_to_numeric[lower_name] = agent.agent_id;
+        register_alias(agent.string_id);
+        register_alias(agent.name);
 
         auto& loc_comp = registry.emplace<LocationComp>(entity, 0u, agent.location, agent.x, agent.y, agent.z);
         location_registry.UpdateEntityPosition(entity, agent.x, agent.z, registry);
-
-        // Find location info in bootstrap data to populate hierarchy/type
-        auto loc_it = std::find_if(bootstrap.locations.begin(), bootstrap.locations.end(), [&](const MundusVivens::LocationData& loc_data) {
-            return loc_data.name == agent.location;
-        });
-        if (loc_it != bootstrap.locations.end()) {
-            loc_comp.type = static_cast<LocationType>(loc_it->type);
-            loc_comp.region_id = loc_it->region_id;
-            loc_comp.territory_id = loc_it->territory_id;
-        }
 
         registry.emplace<ActivityComp>(entity, agent.activity);
 

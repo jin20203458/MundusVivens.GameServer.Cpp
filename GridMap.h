@@ -29,6 +29,6 @@ public:
     std::vector<GridVector2> FindPath(float start_x, float start_z, float end_x, float end_z) const;
 
 private:
-    std::vector<bool> grid_;
+    std::vector<bool> grid_; // 실제 격자맵
     std::unordered_map<std::string, GridVector2> location_coords_;
 };

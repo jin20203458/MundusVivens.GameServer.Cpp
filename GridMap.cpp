@@ -5,13 +5,14 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <nlohmann/json.hpp>
 
 GridMap::GridMap() {
     grid_.assign(WIDTH * HEIGHT, true);
 }
 
 void GridMap::LoadMap(const std::vector<MundusVivens::LocationData>& locations) {
-    // 1. C#에서 넘겨준 부트스트랩 데이터로 거점 좌표 동적 구성 (하드코딩 완전 제거)
+    // 1. C#에서 넘겨준 부트스트랩 데이터로 거점 좌표 동적 구성
     for (const auto& loc : locations) {
         location_coords_[loc.name] = { loc.x, loc.z };
         std::cout << "🗺️ [GridMap] 거점 로드 완료: " << loc.name << " (" 
@@ -36,64 +37,42 @@ void GridMap::LoadMap(const std::vector<MundusVivens::LocationData>& locations) 
         return;
     }
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    file.close();
+    try {
+        nlohmann::json j;
+        file >> j;
+        file.close();
 
-    // 초간단 JSON 파서 (정규식이나 라이브러리 없이 토큰 분리)
-    // 패턴: {"min_x": X, "min_z": Z, "max_x": X, "max_z": Z}
-    size_t pos = 0;
-    int loaded_count = 0;
-    while ((pos = content.find('{', pos)) != std::string::npos) {
-        size_t end_pos = content.find('}', pos);
-        if (end_pos == std::string::npos) break;
+        int loaded_count = 0;
+        for (const auto& entry : j) {
+            if (entry.contains("min_x") && entry.contains("min_z") &&
+                entry.contains("max_x") && entry.contains("max_z")) {
+                
+                int min_x = entry["min_x"].get<int>();
+                int min_z = entry["min_z"].get<int>();
+                int max_x = entry["max_x"].get<int>();
+                int max_z = entry["max_z"].get<int>();
 
-        std::string entry = content.substr(pos, end_pos - pos);
-        pos = end_pos + 1;
+                // 바운더리 클램핑
+                min_x = std::clamp(min_x, 0, WIDTH - 1);
+                max_x = std::clamp(max_x, 0, WIDTH - 1);
+                min_z = std::clamp(min_z, 0, HEIGHT - 1);
+                max_z = std::clamp(max_z, 0, HEIGHT - 1);
 
-        auto get_value = [&](const std::string& key) -> int {
-            size_t kpos = entry.find(key);
-            if (kpos == std::string::npos) return -1;
-            size_t cpos = entry.find(':', kpos);
-            if (cpos == std::string::npos) return -1;
-            
-            // 콜론 다음 숫자 시작점 탐색
-            size_t start = cpos + 1;
-            while (start < entry.size() && (std::isspace(entry[start]) || entry[start] == '"')) {
-                start++;
-            }
-            size_t end = start;
-            while (end < entry.size() && (std::isdigit(entry[end]) || entry[end] == '-')) {
-                end++;
-            }
-            if (start == end) return -1;
-            return std::stoi(entry.substr(start, end - start));
-        };
-
-        int min_x = get_value("min_x");
-        int min_z = get_value("min_z");
-        int max_x = get_value("max_x");
-        int max_z = get_value("max_z");
-
-        if (min_x >= 0 && min_z >= 0 && max_x >= 0 && max_z >= 0) {
-            // 바운더리 클램핑
-            min_x = std::clamp(min_x, 0, WIDTH - 1);
-            max_x = std::clamp(max_x, 0, WIDTH - 1);
-            min_z = std::clamp(min_z, 0, HEIGHT - 1);
-            max_z = std::clamp(max_z, 0, HEIGHT - 1);
-
-            for (int x = min_x; x <= max_x; ++x) {
-                for (int z = min_z; z <= max_z; ++z) {
-                    grid_[x * HEIGHT + z] = false;
+                for (int x = min_x; x <= max_x; ++x) {
+                    for (int z = min_z; z <= max_z; ++z) {
+                        grid_[x * HEIGHT + z] = false;
+                    }
                 }
+                std::cout << "🧱 [GridMap 장애물 로드] 사각형 영역: (" << min_x << ", " << min_z 
+                          << ") ~ (" << max_x << ", " << max_z << ")" << std::endl;
+                loaded_count++;
             }
-            std::cout << "🧱 [GridMap 장애물 로드] 사각형 영역: (" << min_x << ", " << min_z 
-                      << ") ~ (" << max_x << ", " << max_z << ")" << std::endl;
-            loaded_count++;
         }
+        std::cout << "🧱 [GridMap] 총 " << loaded_count << "개의 동적 장애물 로드 완료." << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [GridMap 에러] JSON 파싱 중 예외 발생: " << e.what() << std::endl;
+        file.close();
     }
-    std::cout << "🧱 [GridMap] 총 " << loaded_count << "개의 동적 장애물 로드 완료." << std::endl;
 }
 
 bool GridMap::IsWalkable(int x, int z) const {
