@@ -85,6 +85,46 @@ void signal_handler(int signal) {
     }
 }
 
+void SystemDeath(entt::registry& reg) {
+    auto view = reg.view<HealthComp, IdentityComp>();
+    view.each([&](entt::entity entity, HealthComp& health, IdentityComp& identity) {
+        if (health.is_dead) {
+            if (reg.all_of<ToilComp>(entity)) {
+                auto& toil = reg.get<ToilComp>(entity);
+                if (toil.state != ToilState::Idle) {
+                    toil.state = ToilState::Idle;
+                    toil.duration_ticks = 0;
+                    toil.current_action = "Dead";
+                }
+            }
+            if (reg.all_of<VelocityComp>(entity)) {
+                auto& vel = reg.get<VelocityComp>(entity);
+                vel.speed = 0.0f;
+                vel.dir_x = 0.0f;
+                vel.dir_z = 0.0f;
+            }
+            if (reg.all_of<PathfindingComp>(entity)) {
+                auto& path = reg.get<PathfindingComp>(entity);
+                path.waypoints.clear();
+            }
+            if (reg.all_of<ActivityComp>(entity)) {
+                auto& act = reg.get<ActivityComp>(entity);
+                if (act.current_activity != "사망") {
+                    act.current_activity = "사망";
+                    std::cout << "💀 [사망 처리 완료] " << identity.display_name << "의 물리 시뮬레이션이 중단되었습니다." << std::endl;
+                }
+            }
+            if (reg.all_of<CombatComp>(entity)) {
+                auto& combat = reg.get<CombatComp>(entity);
+                combat.target_entity = entt::null;
+            }
+            if (reg.all_of<BehaviorTreeComp>(entity)) {
+                reg.erase<BehaviorTreeComp>(entity);
+            }
+        }
+    });
+}
+
 int main() {
 #ifdef _WIN32
     // Windows 환경의 콘솔창에서 한글 깨짐을 방지하기 위한 UTF-8(코드페이지 65001) 설정
@@ -140,7 +180,7 @@ int main() {
 
     entt::registry registry;
 
-    // [Smell #5 해결] 시뮬레이션 설정 파일 로드 및 컨텍스트에 등록
+    //  시뮬레이션 설정 파일 로드 및 컨텍스트에 등록
     SimulationSettings sim_settings;
     {
         std::ifstream file("shared_simulation_settings.json");
@@ -178,7 +218,7 @@ int main() {
         }
     }
 
-    // [Smell #5 해결] C#-C++ 설정 동등성(Handshake Validation) 검증
+    //  C#-C++ 설정 동등성(Handshake Validation) 검증
     if (std::abs(sim_settings.npc_speed - bootstrap.npc_speed) > 0.001f || 
         sim_settings.ticks_per_game_hour != static_cast<int>(bootstrap.ticks_per_game_hour)) {
         std::cerr << "\n====================================================" << std::endl;
@@ -250,6 +290,9 @@ int main() {
             loc.territory_id
         );
     }
+
+    // 2D Region Bake Map 생성 (O(1) 거점 판정 최적화)
+    location_registry.BakeRegionMap(GridMap::WIDTH, GridMap::HEIGHT);
 
     //  부트스트랩 가구(사물) 데이터 로드 및 엔티티 생성
     std::cout << "[C++ 서버] " << bootstrap.furniture.size() << "개의 가구/사물 오브젝트 데이터를 동적 배치하는 중..." << std::endl;
@@ -340,6 +383,10 @@ int main() {
         needs.hunger = dist_needs(gen_needs);
         needs.fatigue = dist_needs(gen_needs);
 
+        // 🆕 체력 및 전투 컴포넌트 추가
+        registry.emplace<HealthComp>(entity);
+        registry.emplace<CombatComp>(entity);
+
         //  행동 트리(BT) 컴포넌트 추가 및 초기화
         auto& bt = registry.emplace<BehaviorTreeComp>(entity);
         bt.root_node = BT::CreateSurvivalTree();
@@ -361,6 +408,9 @@ int main() {
 
     std::cout << "[C++ 서버] 월드 부트스트랩 완료: 위치 " << bootstrap.locations.size()
               << "곳, NPC " << npc_count << "명 연동 완료." << std::endl;
+
+
+
     std::cout << "[C++ 서버] 20Hz 고정 틱레이트 게임 루프 가동. 종료하려면 Ctrl+C를 누르세요.\n" << std::endl;
 
     // 난수 생성기 및 확률 분포 세팅
@@ -372,7 +422,7 @@ int main() {
     GrpcResultQueue grpc_queue;
 
     //  행동 트리(BT) 실행을 위한 전역 컨텍스트 등록
-    registry.ctx().emplace<BT::BTContext>(&async_client, &grpc_queue, &location_registry, &tick);
+    registry.ctx().emplace<BT::BTContext>(&async_client, &grpc_queue, &location_registry, &tick, &grid_map);
 
     bool is_first_loop = true;
     bool is_tick_sync_pending = false;
@@ -489,10 +539,11 @@ int main() {
         // 경로 탐색 및 실시간 이동 구동 (20Hz)
         SystemBusyAmbient(registry, 0.05f);
         SystemBehaviorTree(registry); //  행동 트리(BT) 엔진 실행
+        SystemDeath(registry);        //  🆕 사망 처리 시스템
         SystemSurvivalOverride(registry, location_registry, tick, async_client, grpc_queue); //  생체 위기 감지 및 인터럽트
         SystemPathfinding(registry, grid_map);
         SystemMovement(registry, location_registry, tick);
-        SystemAffordanceResolver(registry, location_registry, tick, async_client, grpc_queue); //  사물 상호작용 및 충전
+        SystemAffordanceResolver(registry, location_registry, tick, async_client, grpc_queue); //  가구 무결성 검증 및 자동 반납 전용
 
         // 월드 상태 스냅샷 클라이언트 브로드캐스트 (20Hz)
         SystemBroadcastWorldSnapshot(registry, tcp_server, tick);

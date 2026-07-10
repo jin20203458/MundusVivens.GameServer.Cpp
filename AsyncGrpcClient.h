@@ -41,7 +41,7 @@ public:
     //  비동기 믿음(소문) 주입
     void InjectBeliefAsync(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, InjectBeliefCallback on_complete);
 
-    // 🚀 Axis 2: Job 및 Interrupt 관리 비동기 RPC
+    //  Job 및 Interrupt 관리 비동기 RPC
     using PendingJobsCallback = std::function<void(bool success, const std::vector<MundusVivensClient::JobPayload>& jobs)>;
     using ReportJobStatusCallback = std::function<void(bool success, bool has_new_job, const MundusVivensClient::JobPayload& new_job, const std::string& message)>;
 

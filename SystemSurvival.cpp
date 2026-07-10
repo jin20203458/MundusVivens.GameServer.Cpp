@@ -54,8 +54,8 @@ void SystemAffordanceResolver(entt::registry& reg, LocationRegistry& grid, int c
     });
 
     // 2. C# 스케줄을 처리하고 있는 NPC들의 상태 조율 (BT 기아/피로 위기 해결 중이 아닐 때만 작동)
-    auto npc_view = reg.view<NeedsComp, LocationComp, ToilComp, JobComp, IdentityComp>();
-    npc_view.each([&](entt::entity npc_entity, NeedsComp& needs, LocationComp& loc, ToilComp& toil, JobComp& job, IdentityComp& identity) {
+    auto npc_view = reg.view<NeedsComp, ToilComp, JobComp>();
+    npc_view.each([&]([[maybe_unused]] entt::entity npc_entity, NeedsComp& needs, ToilComp& toil, JobComp& job) {
         if (needs.is_resolving_survival) {
             return; // 위기 상태는 BT가 전담 처리하므로 스킵
         }
@@ -99,108 +99,6 @@ void SystemAffordanceResolver(entt::registry& reg, LocationRegistry& grid, int c
                     }
                 }
                 needs.occupied_furniture = entt::null;
-            }
-        }
-
-        // 수면 또는 식사를 수행해야 하는 경우 (스케줄)
-        bool needs_action = is_scheduled_sleep || is_scheduled_eat;
-        if (needs_action) {
-            bool at_destination = (loc.location_name == job.target_location);
-            if (at_destination) {
-                // 가구 점유 시도
-                if (needs.occupied_furniture == entt::null) {
-                    entt::entity target_furn = entt::null;
-                    auto furn_view_inner = reg.view<AffordanceComp, LocationComp, IdentityComp>();
-                    furn_view_inner.each([&](entt::entity furn_ent, AffordanceComp& aff, LocationComp& furn_loc, IdentityComp& furn_id) {
-                        if (target_furn != entt::null) return;
-                        if (furn_loc.zone_id == loc.zone_id && aff.occupied_by == entt::null) {
-                            if (is_scheduled_eat) {
-                                if (aff.type == AffordanceType::Eat || aff.type == AffordanceType::Drink || aff.type == AffordanceType::Sit) {
-                                    target_furn = furn_ent;
-                                }
-                            } else if (is_scheduled_sleep) {
-                                if (aff.type == AffordanceType::Sleep || aff.type == AffordanceType::Sit) {
-                                    target_furn = furn_ent;
-                                }
-                            }
-                        }
-                    });
-
-                    // 황무지이고 주변에 가구가 없으면 야영지/모닥불 스폰
-                    if (target_furn == entt::null && (loc.location_name == "Wilderness" || loc.location_name == "황무지")) {
-                        entt::entity camp_ent = reg.create();
-                        if (is_scheduled_eat) {
-                            reg.emplace<IdentityComp>(camp_ent, 0u, "임시 모닥불");
-                            reg.emplace<LocationComp>(camp_ent, loc.zone_id, loc.location_name, loc.x, loc.y, loc.z);
-                            auto& camp_aff = reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Eat, entt::null);
-                            camp_aff.is_temporary = true;
-                        } else {
-                            reg.emplace<IdentityComp>(camp_ent, 0u, "임시 야영지");
-                            reg.emplace<LocationComp>(camp_ent, loc.zone_id, loc.location_name, loc.x, loc.y, loc.z);
-                            auto& camp_aff = reg.emplace<AffordanceComp>(camp_ent, AffordanceType::Sleep, entt::null);
-                            camp_aff.is_temporary = true;
-                        }
-                        grid.UpdateEntityPosition(camp_ent, loc.x, loc.z, reg);
-                        target_furn = camp_ent;
-                    }
-
-                    if (target_furn != entt::null) {
-                        auto& target_aff = reg.get<AffordanceComp>(target_furn);
-                        target_aff.occupied_by = npc_entity;
-                        needs.occupied_furniture = target_furn;
-
-                        const auto& furn_loc = reg.get<LocationComp>(target_furn);
-                        loc.x = furn_loc.x;
-                        loc.y = furn_loc.y;
-                        loc.z = furn_loc.z;
-
-                        auto& act = reg.get<ActivityComp>(npc_entity);
-                        if (is_scheduled_eat) {
-                            toil.current_action = "Eating";
-                            act.current_activity = reg.get<AffordanceComp>(target_furn).is_temporary ? "황무지 야영지에서 식사 중" : "식탁에 앉아 식사 중";
-                        } else {
-                            toil.current_action = "Sleeping";
-                            act.current_activity = reg.get<AffordanceComp>(target_furn).is_temporary ? "황무지 야영지에서 숙면 중" : "침대에서 숙면 중";
-                        }
-                    } else {
-                        // 맨바닥 노숙
-                        auto& act = reg.get<ActivityComp>(npc_entity);
-                        if (is_scheduled_eat) {
-                            toil.current_action = "Eating_On_Floor";
-                            act.current_activity = "자리가 부족해 바닥에서 식사 중";
-                        } else {
-                            toil.current_action = "Sleeping_On_Floor";
-                            act.current_activity = "자리가 부족해 구석에서 선잠 중";
-                        }
-                    }
-                }
-
-                // 점유 상태 또는 맨바닥 회복 진행
-                float recovery = 0.0f;
-                if (needs.occupied_furniture != entt::null) {
-                    auto& aff = reg.get<AffordanceComp>(needs.occupied_furniture);
-                    bool is_temp = aff.is_temporary;
-
-                    if (is_scheduled_eat) {
-                        recovery = is_temp ? 0.25f : 0.5f;
-                    } else if (is_scheduled_sleep) {
-                        if (is_temp) recovery = 0.0625f;
-                        else if (aff.type == AffordanceType::Sit) recovery = 0.083f;
-                        else recovery = 0.125f;
-                    }
-                } else {
-                    if (is_scheduled_eat) recovery = 0.125f;
-                    else if (is_scheduled_sleep) recovery = 0.025f;
-                }
-
-                if (is_scheduled_eat) {
-                    needs.hunger += recovery;
-                    if (needs.hunger > 100.0f) needs.hunger = 100.0f;
-                }
-                if (is_scheduled_sleep) {
-                    needs.fatigue += recovery;
-                    if (needs.fatigue > 100.0f) needs.fatigue = 100.0f;
-                }
             }
         }
     });

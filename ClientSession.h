@@ -66,6 +66,6 @@ private:
     std::atomic<bool> is_reading_suspended_{false};
     boost::asio::steady_timer backpressure_timer_;
 
-    // 🆕 전송 큐 (Boost.Asio Channel)
+    //  전송 큐 (Boost.Asio Channel)
     boost::asio::experimental::channel<void(boost::system::error_code, PacketBuffer)> write_channel_;
 };

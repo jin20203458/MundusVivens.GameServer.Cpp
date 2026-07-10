@@ -40,14 +40,14 @@ ClientSession::~ClientSession() {
 boost::asio::awaitable<void> ClientSession::Run() {
     auto self = shared_from_this(); // 비동기 작업 중 객체 수명 보장
     try {
-        // Nagle 알고리즘 비활성화 (저지연 최적화 - Task F-1)
+        // Nagle 알고리즘 비활성화 
         socket_.set_option(boost::asio::ip::tcp::no_delay(true));
 
-        // 🆕 쓰기 루프 코루틴을 단 한 번만 기동
+        //  쓰기 루프 코루틴을 단 한 번만 기동
         boost::asio::co_spawn(socket_.get_executor(), WriteLoop(), boost::asio::detached);
 
         while (true) {
-            // 백프레셔 흐름 제어 활성화 시 코루틴 일시 정지 (Task F-2)
+            // 백프레셔 흐름 제어 활성화 시 코루틴 일시 정지
             if (is_reading_suspended_) {
                 backpressure_timer_.expires_at(std::chrono::steady_clock::time_point::max());
                 try {
@@ -143,7 +143,7 @@ boost::asio::awaitable<void> ClientSession::WriteLoop() {
     auto self = shared_from_this();
     try {
         while (true) {
-            // 🆕 채널로부터 비동기 수신 대기 (채널이 닫히면 operation_aborted 예외를 던지며 종료됨)
+            //  채널로부터 비동기 수신 대기 (채널이 닫히면 operation_aborted 예외를 던지며 종료됨)
             PacketBuffer buf = co_await write_channel_.async_receive(boost::asio::use_awaitable);
 
             const uint8_t* data_ptr = buf.is_heap ? buf.heap_data : buf.inline_data;

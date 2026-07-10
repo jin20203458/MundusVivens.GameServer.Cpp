@@ -147,6 +147,74 @@ public:
     }
 };
 
+// 🆕 조건 노드: 스케줄 식사 여부 검사 및 생체 위기 트리거
+class ConditionIsScheduledEat : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        auto& needs = reg.get<NeedsComp>(entity);
+        
+        // 이미 해당 위기 해결 중이면 Success
+        if (needs.is_resolving_survival && needs.current_survival_type == SurvivalType::Hunger) {
+            return NodeStatus::Success;
+        }
+        
+        // 다른 위기(피로) 해결 중이면 양보
+        if (needs.is_resolving_survival) {
+            return NodeStatus::Failure;
+        }
+        
+        auto& job = reg.get<JobComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+        auto& loc = reg.get<LocationComp>(entity);
+        
+        // 스케줄 Eat 작업이 활성이고, 이미 목적지에 도착하여 Working 중인 경우
+        if (job.is_active && job.category == JobCategory::Eat 
+            && toil.state == ToilState::Working 
+            && loc.location_name == job.target_location) {
+            
+            needs.is_resolving_survival = true;
+            needs.current_survival_type = SurvivalType::Hunger;
+            return NodeStatus::Success;
+        }
+        
+        return NodeStatus::Failure;
+    }
+};
+
+// 🆕 조건 노드: 스케줄 수면 여부 검사 및 생체 위기 트리거
+class ConditionIsScheduledSleep : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        auto& needs = reg.get<NeedsComp>(entity);
+        
+        // 이미 해당 위기 해결 중이면 Success
+        if (needs.is_resolving_survival && needs.current_survival_type == SurvivalType::Fatigue) {
+            return NodeStatus::Success;
+        }
+        
+        // 다른 위기(허기) 해결 중이면 양보
+        if (needs.is_resolving_survival) {
+            return NodeStatus::Failure;
+        }
+        
+        auto& job = reg.get<JobComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+        auto& loc = reg.get<LocationComp>(entity);
+        
+        // 스케줄 Sleep 작업이 활성이고, 이미 목적지에 도착하여 Working 중인 경우
+        if (job.is_active && job.category == JobCategory::Sleep 
+            && toil.state == ToilState::Working 
+            && loc.location_name == job.target_location) {
+            
+            needs.is_resolving_survival = true;
+            needs.current_survival_type = SurvivalType::Fatigue;
+            return NodeStatus::Success;
+        }
+        
+        return NodeStatus::Failure;
+    }
+};
+
 // 🆕 실행 노드: 가까운 가구/사물 찾기 및 이동 타겟 지정
 class ActionFindFurniture : public BTNode {
 public:
@@ -455,28 +523,274 @@ public:
     }
 };
 
-// 🆕 생존 행동 트리 조립 팩토리 함수
+// 🆕 조건 노드: 전투 타겟 보유 여부 및 유효성 검사
+class ConditionHasCombatTarget : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        if (!reg.all_of<CombatComp>(entity)) return NodeStatus::Failure;
+        auto& combat = reg.get<CombatComp>(entity);
+        if (combat.target_entity == entt::null || !reg.valid(combat.target_entity)) {
+            return NodeStatus::Failure;
+        }
+        if (reg.all_of<HealthComp>(combat.target_entity)) {
+            auto& target_health = reg.get<HealthComp>(combat.target_entity);
+            if (target_health.is_dead) {
+                combat.target_entity = entt::null; // 사망한 타겟 해제
+                return NodeStatus::Failure;
+            }
+        }
+        return NodeStatus::Success;
+    }
+};
+
+// 🆕 조건 노드: 체력 저하 여부 검사 (HP < 30%)
+class ConditionIsLowHealth : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        if (!reg.all_of<HealthComp>(entity)) return NodeStatus::Failure;
+        auto& health = reg.get<HealthComp>(entity);
+        if (health.hp < 30.0f) {
+            return NodeStatus::Success;
+        }
+        return NodeStatus::Failure;
+    }
+};
+
+// 🆕 실행 노드: 타겟의 반대 방향으로 도주
+class ActionFlee : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        auto& loc = reg.get<LocationComp>(entity);
+        auto& combat = reg.get<CombatComp>(entity);
+        auto& job = reg.get<JobComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+        auto& act = reg.get<ActivityComp>(entity);
+        auto& ctx = reg.ctx().get<BTContext>();
+        auto& identity = reg.get<IdentityComp>(entity);
+
+        if (combat.target_entity == entt::null || !reg.valid(combat.target_entity)) {
+            return NodeStatus::Failure;
+        }
+
+        auto& target_loc = reg.get<LocationComp>(combat.target_entity);
+
+        // 타겟 반대 방향 벡터 계산
+        float dx = loc.x - target_loc.x;
+        float dz = loc.z - target_loc.z;
+        float dist = std::sqrt(dx * dx + dz * dz);
+
+        float dir_x = 1.0f;
+        float dir_z = 0.0f;
+        if (dist > 0.01f) {
+            dir_x = dx / dist;
+            dir_z = dz / dist;
+        } else {
+            // 거리가 너무 가까우면 랜덤 방향 설정
+            dir_x = (rand() % 200 - 100) / 100.0f;
+            dir_z = (rand() % 200 - 100) / 100.0f;
+            float r_dist = std::sqrt(dir_x * dir_x + dir_z * dir_z);
+            if (r_dist > 0.0f) {
+                dir_x /= r_dist;
+                dir_z /= r_dist;
+            }
+        }
+
+        float flee_distance = 15.0f;
+        float dest_x = std::clamp(loc.x + dir_x * flee_distance, 5.0f, 1995.0f);
+        float dest_z = std::clamp(loc.z + dir_z * flee_distance, 5.0f, 1995.0f);
+
+        // GridMap 경계 제한 및 이동성 확인 (벽 피하기)
+        if (ctx.grid_map) {
+            int gx = static_cast<int>(dest_x);
+            int gz = static_cast<int>(dest_z);
+            if (!ctx.grid_map->IsWalkable(gx, gz)) {
+                // 회전 시도 (+45도, -45도 등)
+                float angles[] = { 0.785f, -0.785f, 1.57f, -1.57f };
+                bool found = false;
+                for (float angle : angles) {
+                    float rx = dir_x * std::cos(angle) - dir_z * std::sin(angle);
+                    float rz = dir_x * std::sin(angle) + dir_z * std::cos(angle);
+                    float test_x = std::clamp(loc.x + rx * flee_distance, 5.0f, 1995.0f);
+                    float test_z = std::clamp(loc.z + rz * flee_distance, 5.0f, 1995.0f);
+                    int tgx = static_cast<int>(test_x);
+                    int tgz = static_cast<int>(test_z);
+                    if (ctx.grid_map->IsWalkable(tgx, tgz)) {
+                        dest_x = test_x;
+                        dest_z = test_z;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    dest_x = std::clamp(loc.x, 5.0f, 1995.0f);
+                    dest_z = std::clamp(loc.z, 5.0f, 1995.0f);
+                }
+            }
+        }
+
+        // 목적지 설정 및 이동 트리거 (A* 활용)
+        if (std::abs(job.target_x - dest_x) > 1.0f || std::abs(job.target_z - dest_z) > 1.0f) {
+            job.target_x = dest_x;
+            job.target_z = dest_z;
+            job.target_location = "Wilderness";
+            
+            if (reg.all_of<PathfindingComp>(entity)) {
+                auto& path = reg.get<PathfindingComp>(entity);
+                path.waypoints.clear();
+                path.current_waypoint_index = 0;
+            }
+            
+            toil.state = ToilState::Moving;
+            act.current_activity = "도망치는 중!";
+            std::cout << "🏃 [BT 도주] " << identity.display_name << "이(가) 위험을 느끼고 (" 
+                      << dest_x << ", " << dest_z << ") 방향으로 도망칩니다." << std::endl;
+        }
+
+        return NodeStatus::Running;
+    }
+};
+
+// 🆕 실행 노드: 타겟 공격 또는 추격
+class ActionMeleeAttack : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        auto& loc = reg.get<LocationComp>(entity);
+        auto& combat = reg.get<CombatComp>(entity);
+        auto& job = reg.get<JobComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+        auto& act = reg.get<ActivityComp>(entity);
+        auto& identity = reg.get<IdentityComp>(entity);
+
+        if (combat.target_entity == entt::null || !reg.valid(combat.target_entity)) {
+            return NodeStatus::Failure;
+        }
+
+        auto& target_loc = reg.get<LocationComp>(combat.target_entity);
+        auto& target_health = reg.get<HealthComp>(combat.target_entity);
+        auto& target_ident = reg.get<IdentityComp>(combat.target_entity);
+
+        float dx = target_loc.x - loc.x;
+        float dz = target_loc.z - loc.z;
+        float dist = std::sqrt(dx * dx + dz * dz);
+
+        // 1. 공격 사거리 밖 -> 추격 이동
+        if (dist > combat.attack_range) {
+            if (std::abs(job.target_x - target_loc.x) > 1.5f || std::abs(job.target_z - target_loc.z) > 1.5f) {
+                job.target_x = target_loc.x;
+                job.target_z = target_loc.z;
+                job.target_location = target_loc.location_name.empty() ? "Wilderness" : target_loc.location_name;
+
+                if (reg.all_of<PathfindingComp>(entity)) {
+                    auto& path = reg.get<PathfindingComp>(entity);
+                    path.waypoints.clear();
+                    path.current_waypoint_index = 0;
+                }
+
+                toil.state = ToilState::Moving;
+                act.current_activity = "추격 중: " + target_ident.display_name;
+            }
+            return NodeStatus::Running;
+        }
+
+        // 2. 공격 사거리 내 -> 공격 수행
+        if (toil.state == ToilState::Moving) {
+            toil.state = ToilState::Working;
+            if (reg.all_of<VelocityComp>(entity)) {
+                auto& vel = reg.get<VelocityComp>(entity);
+                vel.dir_x = 0.0f;
+                vel.dir_z = 0.0f;
+                vel.speed = 0.0f;
+            }
+        }
+
+        // 쿨다운 관리
+        if (combat.cooldown_ticks > 0) {
+            combat.cooldown_ticks--;
+            act.current_activity = "대치 중: " + target_ident.display_name;
+            return NodeStatus::Running;
+        }
+
+        // 실제 피해 적용
+        target_health.hp -= combat.attack_damage;
+        combat.cooldown_ticks = 20; // 20틱(1초) 쿨다운
+        act.current_activity = "공격 중: " + target_ident.display_name;
+
+        std::cout << "⚔️ [BT 공격] " << identity.display_name << "이(가) " 
+                  << target_ident.display_name << "을(를) 공격! (데미지: " << combat.attack_damage 
+                  << ", 남은 HP: " << target_health.hp << "/" << target_health.max_hp << ")" << std::endl;
+
+        if (reg.all_of<BusyTag>(combat.target_entity)) {
+            reg.erase<BusyTag>(combat.target_entity);
+            std::cout << "💥 [BT 인터럽트] 피격당한 " << target_ident.display_name << "의 행동이 중단되었습니다." << std::endl;
+        }
+
+        if (reg.all_of<CombatComp>(combat.target_entity)) {
+            auto& target_combat = reg.get<CombatComp>(combat.target_entity);
+            if (target_combat.target_entity == entt::null) {
+                target_combat.target_entity = entity;
+                std::cout << "👿 [BT 보복 타겟팅] " << target_ident.display_name << "이(가) 공격자 " 
+                          << identity.display_name << "을(를) 보복 타겟으로 지정합니다." << std::endl;
+            }
+        }
+
+        if (target_health.hp <= 0.0f) {
+            target_health.hp = 0.0f;
+            target_health.is_dead = true;
+            combat.target_entity = entt::null;
+            std::cout << "💀 [BT 사망] " << target_ident.display_name << "이(가) 사망하였습니다." << std::endl;
+        }
+
+        return NodeStatus::Success;
+    }
+};
+
+// 🆕 생존/전투 행동 트리 조립 팩토리 함수
 inline std::unique_ptr<BTNode> CreateSurvivalTree() {
-    // Sequence(배고픔? ➔ 가구찾기 ➔ 이동 ➔ 식사)
+    // Sequence (도주: 타겟 있음 + HP 낮음 ➔ 도주)
+    auto flee_seq = std::make_unique<Sequence>();
+    flee_seq->AddChild(std::make_unique<ConditionHasCombatTarget>());
+    flee_seq->AddChild(std::make_unique<ConditionIsLowHealth>());
+    flee_seq->AddChild(std::make_unique<ActionFlee>());
+
+    // Sequence (전투: 타겟 있음 ➔ 추격/공격)
+    auto combat_seq = std::make_unique<Sequence>();
+    combat_seq->AddChild(std::make_unique<ConditionHasCombatTarget>());
+    combat_seq->AddChild(std::make_unique<ActionMeleeAttack>());
+
+    // Sequence (기아 위기 해결)
     auto hunger_seq = std::make_unique<Sequence>();
     hunger_seq->AddChild(std::make_unique<ConditionIsHungry>());
     hunger_seq->AddChild(std::make_unique<ActionFindFurniture>());
     hunger_seq->AddChild(std::make_unique<ActionMoveToTarget>());
     hunger_seq->AddChild(std::make_unique<ActionInteractFurniture>());
     
-    // Sequence(피로? ➔ 가구찾기 ➔ 이동 ➔ 취침)
+    // Sequence (피로 위기 해결)
     auto fatigue_seq = std::make_unique<Sequence>();
     fatigue_seq->AddChild(std::make_unique<ConditionIsFatigued>());
     fatigue_seq->AddChild(std::make_unique<ActionFindFurniture>());
     fatigue_seq->AddChild(std::make_unique<ActionMoveToTarget>());
     fatigue_seq->AddChild(std::make_unique<ActionInteractFurniture>());
+
+    // Sequence (스케줄 식사)
+    auto sched_eat_seq = std::make_unique<Sequence>();
+    sched_eat_seq->AddChild(std::make_unique<ConditionIsScheduledEat>());
+    sched_eat_seq->AddChild(std::make_unique<ActionInteractFurniture>());
+
+    // Sequence (스케줄 수면)
+    auto sched_sleep_seq = std::make_unique<Sequence>();
+    sched_sleep_seq->AddChild(std::make_unique<ConditionIsScheduledSleep>());
+    sched_sleep_seq->AddChild(std::make_unique<ActionInteractFurniture>());
     
-    // Selector(기아 시퀀스, 피로 시퀀스)
-    auto survival_root = std::make_unique<Selector>();
-    survival_root->AddChild(std::move(hunger_seq));
-    survival_root->AddChild(std::move(fatigue_seq));
+    // 루트 Selector (전투/도주가 항상 최우선)
+    auto root = std::make_unique<Selector>();
+    root->AddChild(std::move(flee_seq));
+    root->AddChild(std::move(combat_seq));
+    root->AddChild(std::move(hunger_seq));
+    root->AddChild(std::move(fatigue_seq));
+    root->AddChild(std::move(sched_eat_seq));
+    root->AddChild(std::move(sched_sleep_seq));
     
-    return survival_root;
+    return root;
 }
 
 } // namespace BT

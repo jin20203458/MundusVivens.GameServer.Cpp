@@ -153,6 +153,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
     std::vector<entt::entity> all_npcs;
     for (auto ent : all_candidates_view) {
         if (!reg.all_of<PlayerTag>(ent)) {
+            if (reg.all_of<HealthComp>(ent) && reg.get<HealthComp>(ent).is_dead) continue;
             all_npcs.push_back(ent);
         }
     }
@@ -163,6 +164,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
         if (!reg.valid(initiator)) continue;
         if (processed_entities.count(initiator)) continue;
         if (reg.all_of<BusyTag>(initiator)) continue;
+        if (reg.all_of<CombatComp>(initiator) && reg.get<CombatComp>(initiator).target_entity != entt::null) continue;
 
         const auto& cooldown = reg.get_or_emplace<CooldownComp>(initiator);
         if (cooldown.social_energy < 20) continue; // 사회적 에너지 부족
@@ -183,6 +185,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
             if (processed_entities.count(neighbor)) continue;
             if (reg.all_of<PlayerTag>(neighbor)) continue;
             if (reg.all_of<BusyTag>(neighbor)) continue;
+            if (reg.all_of<CombatComp>(neighbor) && reg.get<CombatComp>(neighbor).target_entity != entt::null) continue;
             if (!reg.all_of<ActivityComp>(neighbor)) continue;
 
             const auto& n_cooldown = reg.get_or_emplace<CooldownComp>(neighbor);

@@ -140,11 +140,16 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
     std::priority_queue<AStarNode, std::vector<AStarNode>, std::greater<AStarNode>> open_set;
     
     // 비용 초기화 및 부모 노드 추적 맵 캐싱 (thread_local flat vector로 힙 할당 제로화)
-    thread_local std::vector<float> g_score;
-    thread_local std::vector<std::pair<int, int>> parent;
+    thread_local std::vector<float> g_score(WIDTH * HEIGHT, 1e9f);
+    thread_local std::vector<std::pair<int, int>> parent(WIDTH * HEIGHT, {-1, -1});
+    thread_local std::vector<int> visited_nodes;
 
-    g_score.assign(WIDTH * HEIGHT, 1e9f);
-    parent.assign(WIDTH * HEIGHT, {-1, -1});
+    // 전체 배열을 초기화하는 대신 이전 탐색에서 방문했던 노드들만 O(K)로 선택적 초기화
+    for (int idx : visited_nodes) {
+        g_score[idx] = 1e9f;
+        parent[idx] = {-1, -1};
+    }
+    visited_nodes.clear();
 
     auto heuristic = [](int x1, int z1, int x2, int z2) -> float {
         // Octile distance (대각선 지원)
@@ -154,6 +159,7 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
     };
 
     g_score[sx * HEIGHT + sz] = 0.0f;
+    visited_nodes.push_back(sx * HEIGHT + sz);
     float h_start = heuristic(sx, sz, ex, ez);
     open_set.push({sx, sz, 0.0f, h_start});
 
@@ -190,6 +196,9 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
                 float tentative_g = curr.g + move_cost[i];
                 int n_idx = nx * HEIGHT + nz;
                 if (tentative_g < g_score[n_idx]) {
+                    if (g_score[n_idx] >= 1e9f) {
+                        visited_nodes.push_back(n_idx);
+                    }
                     g_score[n_idx] = tentative_g;
                     parent[n_idx] = {curr.x, curr.z};
                     open_set.push({nx, nz, tentative_g, tentative_g + heuristic(nx, nz, ex, ez)});

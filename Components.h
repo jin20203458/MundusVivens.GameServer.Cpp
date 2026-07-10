@@ -212,6 +212,21 @@ struct BehaviorTreeComp {
     std::unique_ptr<BT::BTNode> root_node;
 };
 
+// 🆕 체력 컴포넌트 (물리적 전투용)
+struct HealthComp {
+    float hp = 100.0f;
+    float max_hp = 100.0f;
+    bool is_dead = false;
+};
+
+// 🆕 전투 컴포넌트 (물리적 전투용)
+struct CombatComp {
+    entt::entity target_entity = entt::null;
+    float attack_range = 2.0f;
+    float attack_damage = 10.0f;
+    int cooldown_ticks = 0;
+};
+
 //  시뮬레이션 전역 상수 설정 (shared_simulation_settings.json 바인딩용)
 struct SimulationSettings {
     float npc_speed = 2.0f;

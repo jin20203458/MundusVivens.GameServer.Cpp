@@ -2,12 +2,16 @@
 #include <iostream>
 
 uint32_t LocationRegistry::GetOrCreateZoneId(const std::string& name) {
+    if (zone_to_name_.empty()) {
+        zone_to_name_.push_back("Wilderness");
+    }
     auto it = name_to_zone_.find(name);
     if (it != name_to_zone_.end()) {
         return it->second;
     }
     uint32_t zone_id = next_zone_id_++;
     name_to_zone_[name] = zone_id;
+    zone_to_name_.push_back(name);
     return zone_id;
 }
 
@@ -17,6 +21,32 @@ void LocationRegistry::RegisterLocation(const std::string& name, float x, float 
     location_centers_[name] = {x, z, type, region_id, territory_id};
     // 거점 등록 시 Zone ID도 미리 매핑 생성
     GetOrCreateZoneId(name);
+}
+
+void LocationRegistry::BakeRegionMap(int width, int height) {
+    map_width_ = width;
+    map_height_ = height;
+    region_map_.assign(width * height, 0); // 0 = Wilderness (기본값)
+
+    for (const auto& [name, location] : location_centers_) {
+        uint32_t zone_id = GetOrCreateZoneId(name);
+        
+        int min_x = std::max(0, static_cast<int>(std::floor(location.x - LOCATION_RADIUS)));
+        int max_x = std::min(width - 1, static_cast<int>(std::ceil(location.x + LOCATION_RADIUS)));
+        int min_z = std::max(0, static_cast<int>(std::floor(location.z - LOCATION_RADIUS)));
+        int max_z = std::min(height - 1, static_cast<int>(std::ceil(location.z + LOCATION_RADIUS)));
+
+        for (int x = min_x; x <= max_x; ++x) {
+            for (int z = min_z; z <= max_z; ++z) {
+                float dx = static_cast<float>(x) - location.x;
+                float dz = static_cast<float>(z) - location.z;
+                if ((dx * dx + dz * dz) <= (LOCATION_RADIUS * LOCATION_RADIUS)) {
+                    region_map_[x * height + z] = zone_id;
+                }
+            }
+        }
+    }
+    std::cout << "🗺️ [LocationRegistry] Region Bake Map 생성 완료 (" << width << "x" << height << ")" << std::endl;
 }
 
 void LocationRegistry::UpdateEntityPosition(entt::entity e, float x, float z, entt::registry& reg) {
@@ -29,7 +59,7 @@ void LocationRegistry::UpdateEntityPosition(entt::entity e, float x, float z, en
         if (it->second == new_cell) {
             cell_changed = false;
         } else {
-            // 이전 셀에서 엔티티 제거
+            // 이전 셀에서 엔티티 제거rmfja
             auto& old_vec = cell_entities_[it->second];
             old_vec.erase(std::remove(old_vec.begin(), old_vec.end(), e), old_vec.end());
         }
@@ -44,21 +74,34 @@ void LocationRegistry::UpdateEntityPosition(entt::entity e, float x, float z, en
     if (reg.all_of<LocationComp>(e)) {
         auto& loc = reg.get<LocationComp>(e);
         
-        float min_dist = 999999.0f;
-        std::string closest_loc = "Wilderness";
+        int ix = std::clamp(static_cast<int>(std::round(x)), 0, map_width_ > 0 ? map_width_ - 1 : 1999);
+        int iz = std::clamp(static_cast<int>(std::round(z)), 0, map_height_ > 0 ? map_height_ - 1 : 1999);
+        
+        uint32_t resolved_zone = 0;
+        std::string resolved_loc = "Wilderness";
 
-        for (const auto& [loc_name, coords] : location_centers_) {
-            float dx = coords.x - x;
-            float dz = coords.z - z;
-            float dist = std::sqrt(dx * dx + dz * dz);
-            if (dist < min_dist) {
-                min_dist = dist;
-                closest_loc = loc_name;
+        if (!region_map_.empty()) {
+            resolved_zone = region_map_[ix * map_height_ + iz];
+            if (resolved_zone != 0 && resolved_zone < zone_to_name_.size()) {
+                resolved_loc = zone_to_name_[resolved_zone];
             }
-        }
+        } else {
+            // Bake Map이 아직 생성되지 않은 경우를 위한 Fallback
+            float min_dist = 999999.0f;
+            std::string closest_loc = "Wilderness";
 
-        std::string resolved_loc = (min_dist <= LOCATION_RADIUS) ? closest_loc : "Wilderness";
-        uint32_t resolved_zone = GetOrCreateZoneId(resolved_loc);
+            for (const auto& [loc_name, coords] : location_centers_) {
+                float dx = coords.x - x;
+                float dz = coords.z - z;
+                float dist = std::sqrt(dx * dx + dz * dz);
+                if (dist < min_dist) {
+                    min_dist = dist;
+                    closest_loc = loc_name;
+                }
+            }
+            resolved_loc = (min_dist <= LOCATION_RADIUS) ? closest_loc : "Wilderness";
+            resolved_zone = GetOrCreateZoneId(resolved_loc);
+        }
         
         if (loc.location_name != resolved_loc || loc.zone_id != resolved_zone) {
             std::cout << "🔀 [구역 동적 진입] 엔티티 " << (int)e 

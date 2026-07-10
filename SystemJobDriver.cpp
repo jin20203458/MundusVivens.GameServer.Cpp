@@ -22,6 +22,11 @@ void SystemJobDriver(entt::registry& reg, LocationRegistry& grid, int current_ti
         auto& job = reg.get_or_emplace<JobComp>(entity);
         auto& toil = reg.get_or_emplace<ToilComp>(entity);
 
+        // 사망한 NPC는 고차원 스케줄 관리 중단
+        if (reg.all_of<HealthComp>(entity) && reg.get<HealthComp>(entity).is_dead) {
+            return;
+        }
+
         //  만약 생체 위기 해결(로컬 BT) 중인 경우, 고차원 JobDriver 상태 머신은 중지
         if (reg.all_of<NeedsComp>(entity) && reg.get<NeedsComp>(entity).is_resolving_survival) {
             return;

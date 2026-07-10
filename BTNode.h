@@ -8,6 +8,7 @@
 namespace MundusVivens { class AsyncGrpcClient; }
 class GrpcResultQueue;
 class LocationRegistry;
+class GridMap;
 
 namespace BT {
 
@@ -16,6 +17,7 @@ struct BTContext {
     GrpcResultQueue* grpc_queue = nullptr;
     LocationRegistry* location_registry = nullptr;
     int* current_tick = nullptr;
+    const ::GridMap* grid_map = nullptr;
 };
 
 enum class NodeStatus {
