@@ -82,11 +82,13 @@ struct VelocityComp {
 struct PathfindingComp {
     std::vector<GridVector2> waypoints;   // 남은 경로의 타일 좌표들
     size_t current_waypoint_index = 0;    // 현재 목표 웨이포인트 인덱스
+    float last_target_x = 0.0f;           // 마지막으로 길찾기를 수행한 목적지 x
+    float last_target_z = 0.0f;           // 마지막으로 길찾기를 수행한 목적지 z
 };
 
 
 enum class JobCategory : uint8_t {
-    Unspecified = 0, Sleep, Eat, Social, Work, Travel, Survival
+    Unspecified = 0, Sleep, Eat, Social, Work, Travel, Survival, Combat
 };
 
 //  Job 컴포넌트 (C# 대뇌가 할당한 고차원 의도)
@@ -225,6 +227,24 @@ struct CombatComp {
     float attack_range = 2.0f;
     float attack_damage = 10.0f;
     int cooldown_ticks = 0;
+};
+
+// 🆕 팩션 세력 정보
+struct FactionComp {
+    std::string faction_name = "Human"; // 예: "Human_KingdomA", "Wolf", "Goblin"
+};
+
+// 🆕 지성체 여부 (true: 인간형 지성체, false: 짐승/몬스터)
+struct SentienceComp {
+    bool is_sentient = true;
+};
+
+// 🆕 적대감 및 억제 상태 관리
+struct AggroComp {
+    entt::entity threat_entity = entt::null;
+    int32_t aggro_score = 0;                 // 0 ~ 100
+    int32_t inhibit_wait_ticks = 0;          // C# 응답 대기 시간
+    bool is_inhibited = false;               // 현재 이성에 의해 행동 억제(대기) 중인지
 };
 
 //  시뮬레이션 전역 상수 설정 (shared_simulation_settings.json 바인딩용)

@@ -48,6 +48,13 @@ public:
     void GetPendingJobsAsync(int32_t current_tick, PendingJobsCallback on_complete);
     void ReportJobStatusAsync(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, const std::string& detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete);
 
+    // 🆕 4단계: 충동-억제 기반 선제공격 및 피격 알림 인터페이스
+    using ThreatDetectedCallback = std::function<void(bool success, int action_code)>;
+    using ReportCombatEventCallback = std::function<void(bool success)>;
+
+    void ThreatDetectedAsync(uint32_t agent_id, uint32_t target_agent_id, int32_t aggro_score, ThreatDetectedCallback on_complete);
+    void ReportCombatEventAsync(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete);
+
 
 private:
     boost::asio::awaitable<void> DoProcessWorldTick(int32_t tick, TickCallback on_complete);
@@ -59,6 +66,10 @@ private:
     boost::asio::awaitable<void> DoInjectBelief(uint32_t target_agent_id, uint32_t subject_id, std::string content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, InjectBeliefCallback on_complete);
     boost::asio::awaitable<void> DoGetPendingJobs(int32_t current_tick, PendingJobsCallback on_complete);
     boost::asio::awaitable<void> DoReportJobStatus(uint32_t npc_id, uint64_t job_id, int32_t status, mundusvivens::InterruptReason reason_code, std::string detailed_context, int32_t current_tick, ReportJobStatusCallback on_complete);
+    
+    // 🆕 4단계 내부 코루틴 선언
+    boost::asio::awaitable<void> DoThreatDetected(uint32_t agent_id, uint32_t target_agent_id, int32_t aggro_score, ThreatDetectedCallback on_complete);
+    boost::asio::awaitable<void> DoReportCombatEvent(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete);
 
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;
     agrpc::GrpcContext& grpc_ctx_;

@@ -186,6 +186,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
             if (reg.all_of<PlayerTag>(neighbor)) continue;
             if (reg.all_of<BusyTag>(neighbor)) continue;
             if (reg.all_of<CombatComp>(neighbor) && reg.get<CombatComp>(neighbor).target_entity != entt::null) continue;
+            if (reg.all_of<HealthComp>(neighbor) && reg.get<HealthComp>(neighbor).is_dead) continue;
             if (!reg.all_of<ActivityComp>(neighbor)) continue;
 
             const auto& n_cooldown = reg.get_or_emplace<CooldownComp>(neighbor);
@@ -719,4 +720,121 @@ float GetLocationSocialModifier(LocationType type) {
         case LocationType::Church:  return 0.3f;
         default:                    return 1.0f;
     }
+}
+
+// 🆕 어그로 및 팩션 기반 감지 시스템
+void SystemPerception(entt::registry& reg, LocationRegistry& grid) {
+    constexpr float PERCEPTION_RANGE = 20.0f;
+    auto view = reg.view<LocationComp, AggroComp, FactionComp>();
+
+    view.each([&](entt::entity entity, LocationComp& loc, AggroComp& aggro, FactionComp& faction) {
+        // 이미 실제 전투 중이라면 어그로 인지 갱신을 생략
+        if (reg.all_of<CombatComp>(entity)) {
+            auto& combat = reg.get<CombatComp>(entity);
+            if (combat.target_entity != entt::null && reg.valid(combat.target_entity)) {
+                aggro.aggro_score = 0;
+                aggro.is_inhibited = false;
+                return;
+            }
+        }
+
+        // 사망한 개체는 처리 생략
+        if (reg.all_of<HealthComp>(entity) && reg.get<HealthComp>(entity).is_dead) {
+            aggro.aggro_score = 0;
+            aggro.threat_entity = entt::null;
+            aggro.is_inhibited = false;
+            return;
+        }
+
+        // 주변 엔티티 스캔
+        auto neighbors = grid.GetNearbyEntities(loc.x, loc.z, PERCEPTION_RANGE, reg);
+        entt::entity best_threat = entt::null;
+        int32_t highest_gain = 0;
+
+        for (auto neighbor : neighbors) {
+            if (neighbor == entity) continue;
+            if (!reg.valid(neighbor)) continue;
+
+            // 체력 컴포넌트가 없는 무생물(가구 등)은 위협 대상에서 배제
+            if (!reg.all_of<HealthComp>(neighbor)) continue;
+
+            // 사망한 이웃은 제외
+            if (reg.all_of<HealthComp>(neighbor) && reg.get<HealthComp>(neighbor).is_dead) continue;
+
+            // Faction 및 ID 정보 조회
+            std::string n_faction = "Human";
+            uint32_t n_npc_id = 0;
+            if (reg.all_of<IdentityComp>(neighbor)) {
+                n_npc_id = reg.get<IdentityComp>(neighbor).npc_id;
+            }
+            if (reg.all_of<FactionComp>(neighbor)) {
+                n_faction = reg.get<FactionComp>(neighbor).faction_name;
+            }
+
+            // 어그로 면제 쿨다운 검사 (gRPC 스팸 방지)
+            if (reg.all_of<CooldownComp>(entity)) {
+                auto& cd = reg.get<CooldownComp>(entity);
+                auto it_cd = cd.cooldown_per_target.find(n_npc_id);
+                if (it_cd != cd.cooldown_per_target.end()) {
+                    int tick_val = 0;
+                    if (reg.ctx().contains<BT::BTContext>()) {
+                        auto* current_tick_ptr = reg.ctx().get<BT::BTContext>().current_tick;
+                        if (current_tick_ptr) {
+                            tick_val = *current_tick_ptr;
+                        }
+                    }
+                    if (tick_val < it_cd->second) {
+                        continue; // 어그로 면제 기간 중에는 무시
+                    }
+                }
+            }
+
+            int32_t gain = 0;
+
+            // 팩션 간 Hostility 규칙
+            if (faction.faction_name != n_faction) {
+                // 천적 관계 (몬스터 vs 인간 등)
+                if ((faction.faction_name == "Wolf" && n_faction == "Human") ||
+                    (faction.faction_name == "Human" && n_faction == "Wolf") ||
+                    (faction.faction_name == "Goblin" && n_faction == "Human") ||
+                    (faction.faction_name == "Human" && n_faction == "Goblin")) {
+                    gain = 100; // 발견 즉시 어그로 100 폭발
+                }
+                // 적대 세력 관계 (도적 vs 경비병/주민 등)
+                else if ((faction.faction_name == "Bandit" && n_faction == "Human") ||
+                         (faction.faction_name == "Human" && n_faction == "Bandit")) {
+                    gain = 25;  // 4틱 만에 어그로 100 도달
+                }
+            } else {
+                // 동종 팩션(인간 vs 인간)의 경우 사적 원한(Liking < -50) 체크
+                if (reg.all_of<RelationshipCacheComp>(entity)) {
+                    auto& rel_cache = reg.get<RelationshipCacheComp>(entity);
+                    auto it = rel_cache.relationships.find(n_npc_id);
+                    if (it != rel_cache.relationships.end() && it->second.liking <= -50) {
+                        gain = 5; // 20틱(1초) 만에 어그로 100 도달
+                    }
+                }
+            }
+
+            if (gain > highest_gain) {
+                highest_gain = gain;
+                best_threat = neighbor;
+            }
+        }
+
+        // 어그로 갱신
+        if (best_threat != entt::null) {
+            aggro.threat_entity = best_threat;
+            aggro.aggro_score = std::min(100, aggro.aggro_score + highest_gain);
+        } else {
+            // 시야 내에 위협 대상이 없으면 어그로 서서히 감쇠
+            if (aggro.aggro_score > 0) {
+                aggro.aggro_score = std::max(0, aggro.aggro_score - 10);
+                if (aggro.aggro_score == 0) {
+                    aggro.threat_entity = entt::null;
+                    aggro.is_inhibited = false;
+                }
+            }
+        }
+    });
 }

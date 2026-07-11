@@ -49,6 +49,34 @@ void LocationRegistry::BakeRegionMap(int width, int height) {
     std::cout << "🗺️ [LocationRegistry] Region Bake Map 생성 완료 (" << width << "x" << height << ")" << std::endl;
 }
 
+std::string LocationRegistry::GetLocationNameAt(float x, float z) const {
+    int ix = std::clamp(static_cast<int>(std::round(x)), 0, map_width_ > 0 ? map_width_ - 1 : 1999);
+    int iz = std::clamp(static_cast<int>(std::round(z)), 0, map_height_ > 0 ? map_height_ - 1 : 1999);
+
+    if (!region_map_.empty()) {
+        uint32_t resolved_zone = region_map_[ix * map_height_ + iz];
+        if (resolved_zone != 0 && resolved_zone < zone_to_name_.size()) {
+            return zone_to_name_[resolved_zone];
+        }
+    } else {
+        float min_dist = 999999.0f;
+        std::string closest_loc = "Wilderness";
+        for (const auto& [name, coords] : location_centers_) {
+            float dx = coords.x - x;
+            float dz = coords.z - z;
+            float dist = std::sqrt(dx * dx + dz * dz);
+            if (dist < min_dist) {
+                min_dist = dist;
+                closest_loc = name;
+            }
+        }
+        if (min_dist <= LOCATION_RADIUS) {
+            return closest_loc;
+        }
+    }
+    return "Wilderness";
+}
+
 void LocationRegistry::UpdateEntityPosition(entt::entity e, float x, float z, entt::registry& reg) {
     // 1. 셀 키 갱신
     uint64_t new_cell = GetCellKey(x, z);
@@ -73,35 +101,8 @@ void LocationRegistry::UpdateEntityPosition(entt::entity e, float x, float z, en
     // 2. 가장 가까운 거점 파악 및 LocationComp 갱신
     if (reg.all_of<LocationComp>(e)) {
         auto& loc = reg.get<LocationComp>(e);
-        
-        int ix = std::clamp(static_cast<int>(std::round(x)), 0, map_width_ > 0 ? map_width_ - 1 : 1999);
-        int iz = std::clamp(static_cast<int>(std::round(z)), 0, map_height_ > 0 ? map_height_ - 1 : 1999);
-        
-        uint32_t resolved_zone = 0;
-        std::string resolved_loc = "Wilderness";
-
-        if (!region_map_.empty()) {
-            resolved_zone = region_map_[ix * map_height_ + iz];
-            if (resolved_zone != 0 && resolved_zone < zone_to_name_.size()) {
-                resolved_loc = zone_to_name_[resolved_zone];
-            }
-        } else {
-            // Bake Map이 아직 생성되지 않은 경우를 위한 Fallback
-            float min_dist = 999999.0f;
-            std::string closest_loc = "Wilderness";
-
-            for (const auto& [loc_name, coords] : location_centers_) {
-                float dx = coords.x - x;
-                float dz = coords.z - z;
-                float dist = std::sqrt(dx * dx + dz * dz);
-                if (dist < min_dist) {
-                    min_dist = dist;
-                    closest_loc = loc_name;
-                }
-            }
-            resolved_loc = (min_dist <= LOCATION_RADIUS) ? closest_loc : "Wilderness";
-            resolved_zone = GetOrCreateZoneId(resolved_loc);
-        }
+        std::string resolved_loc = GetLocationNameAt(x, z);
+        uint32_t resolved_zone = const_cast<LocationRegistry*>(this)->GetOrCreateZoneId(resolved_loc);
         
         if (loc.location_name != resolved_loc || loc.zone_id != resolved_zone) {
             std::cout << "🔀 [구역 동적 진입] 엔티티 " << (int)e 

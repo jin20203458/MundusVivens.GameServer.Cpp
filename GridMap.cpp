@@ -227,3 +227,38 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
 
     return path;
 }
+
+bool GridMap::IsPathBlocked(float x1, float z1, float x2, float z2) const {
+    int ix1 = std::clamp(static_cast<int>(std::round(x1)), 0, WIDTH - 1);
+    int iz1 = std::clamp(static_cast<int>(std::round(z1)), 0, HEIGHT - 1);
+    int ix2 = std::clamp(static_cast<int>(std::round(x2)), 0, WIDTH - 1);
+    int iz2 = std::clamp(static_cast<int>(std::round(z2)), 0, HEIGHT - 1);
+
+    int dx = std::abs(ix2 - ix1);
+    int dy = std::abs(iz2 - iz1);
+    int sx = (ix1 < ix2) ? 1 : -1;
+    int sy = (iz1 < iz2) ? 1 : -1;
+    int err = dx - dy;
+
+    int cx = ix1;
+    int cz = iz1;
+
+    while (true) {
+        if (!IsWalkable(cx, cz)) {
+            return true; // 장애물 있음 -> Blocked
+        }
+        if (cx == ix2 && cz == iz2) {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            cx += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            cz += sy;
+        }
+    }
+    return false; // 장애물 없음 -> Clear
+}

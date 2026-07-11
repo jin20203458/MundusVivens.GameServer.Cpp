@@ -32,6 +32,16 @@ void SystemJobDriver(entt::registry& reg, LocationRegistry& grid, int current_ti
             return;
         }
 
+        //  만약 교전 중(전투 BT 실행 중)인 경우, 고차원 JobDriver 상태 머신은 중지
+        if (reg.all_of<CombatComp>(entity) && reg.get<CombatComp>(entity).target_entity != entt::null) {
+            return;
+        }
+
+        // 🆕 Local BT 배회 중인 경우, 고차원 JobDriver 중지
+        if (job.intent == "배회 중") {
+            return;
+        }
+
         // NPC가 대화중이거나 바쁘면 Toil 상태를 Interrupted로 전환하고 대기
         if (reg.all_of<BusyTag>(entity)) {
             if (toil.state != ToilState::Interrupted) {

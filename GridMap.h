@@ -28,6 +28,9 @@ public:
     // A* 길찾기 알고리즘 (float 입력을 받아 타일 단위로 연산 후 Vector2 경로 리턴)
     std::vector<GridVector2> FindPath(float start_x, float start_z, float end_x, float end_z) const;
 
+    // 두 지점 사이에 장애물이 있는지 확인 (시야(LOS) 판정용)
+    bool IsPathBlocked(float x1, float z1, float x2, float z2) const;
+
 private:
     std::vector<bool> grid_; // 실제 격자맵
     std::unordered_map<std::string, GridVector2> location_coords_;

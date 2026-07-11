@@ -414,4 +414,71 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoReportJobStatus(uint32_t npc_id,
     }
 }
 
+void AsyncGrpcClient::ThreatDetectedAsync(uint32_t agent_id, uint32_t target_agent_id, int32_t aggro_score, ThreatDetectedCallback on_complete) {
+    boost::asio::co_spawn(grpc_ctx_,
+        DoThreatDetected(agent_id, target_agent_id, aggro_score, std::move(on_complete)),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> AsyncGrpcClient::DoThreatDetected(uint32_t agent_id, uint32_t target_agent_id, int32_t aggro_score, ThreatDetectedCallback on_complete) {
+    try {
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncThreatDetected>;
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        mundusvivens::ThreatDetectedRequest request;
+        request.set_agent_id(agent_id);
+        request.set_target_agent_id(target_agent_id);
+        request.set_aggro_score(aggro_score);
+        mundusvivens::ThreatDetectedResponse response;
+
+        const grpc::Status status = co_await RPC::request(
+            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
+        );
+
+        if (status.ok()) {
+            on_complete(true, static_cast<int>(response.action()));
+        } else {
+            on_complete(false, 1); // 에러 발생 시 억제 유지(REJECT=1)로 폴백
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception in ThreatDetectedAsync] " << e.what() << std::endl;
+        on_complete(false, 1);
+    }
+}
+
+void AsyncGrpcClient::ReportCombatEventAsync(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete) {
+    boost::asio::co_spawn(grpc_ctx_,
+        DoReportCombatEvent(attacker_id, victim_id, damage, weapon, std::move(on_complete)),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> AsyncGrpcClient::DoReportCombatEvent(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete) {
+    try {
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncReportCombatEvent>;
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        mundusvivens::ReportCombatEventRequest request;
+        request.set_attacker_id(attacker_id);
+        request.set_victim_id(victim_id);
+        request.set_damage(damage);
+        request.set_weapon(weapon);
+        mundusvivens::ReportCombatEventResponse response;
+
+        const grpc::Status status = co_await RPC::request(
+            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
+        );
+
+        if (status.ok()) {
+            on_complete(response.success());
+        } else {
+            on_complete(false);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception in ReportCombatEventAsync] " << e.what() << std::endl;
+        on_complete(false);
+    }
+}
+
 } // namespace MundusVivens

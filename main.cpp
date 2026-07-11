@@ -387,6 +387,24 @@ int main() {
         registry.emplace<HealthComp>(entity);
         registry.emplace<CombatComp>(entity);
 
+        // 🆕 4단계: 충동-억제 관련 컴포넌트들 초기화
+        registry.emplace<AggroComp>(entity);
+        auto& faction = registry.emplace<FactionComp>(entity);
+        registry.emplace<SentienceComp>(entity, true); // NPC는 기본적으로 지성체
+
+        // 몬스터 시뮬레이션을 위한 팩션 세팅
+        if (agent.name.find("늑대") != std::string::npos || agent.name.find("Wolf") != std::string::npos) {
+            faction.faction_name = "Wolf";
+            registry.get<SentienceComp>(entity).is_sentient = false; // 늑대는 비지성체 (즉각 덮침)
+        } else if (agent.name.find("고블린") != std::string::npos || agent.name.find("Goblin") != std::string::npos) {
+            faction.faction_name = "Goblin";
+            registry.get<SentienceComp>(entity).is_sentient = true;  // 고블린은 지성체
+        } else if (agent.name.find("도적") != std::string::npos || agent.name.find("Bandit") != std::string::npos) {
+            faction.faction_name = "Bandit";
+        } else {
+            faction.faction_name = "Human";
+        }
+
         //  행동 트리(BT) 컴포넌트 추가 및 초기화
         auto& bt = registry.emplace<BehaviorTreeComp>(entity);
         bt.root_node = BT::CreateSurvivalTree();
@@ -538,11 +556,12 @@ int main() {
 
         // 경로 탐색 및 실시간 이동 구동 (20Hz)
         SystemBusyAmbient(registry, 0.05f);
+        SystemPerception(registry, location_registry); // 🆕 4단계: 어그로 및 위협 감지 갱신 (20Hz)
         SystemBehaviorTree(registry); //  행동 트리(BT) 엔진 실행
         SystemDeath(registry);        //  🆕 사망 처리 시스템
         SystemSurvivalOverride(registry, location_registry, tick, async_client, grpc_queue); //  생체 위기 감지 및 인터럽트
         SystemPathfinding(registry, grid_map);
-        SystemMovement(registry, location_registry, tick);
+        SystemMovement(registry, location_registry, grid_map, tick);
         SystemAffordanceResolver(registry, location_registry, tick, async_client, grpc_queue); //  가구 무결성 검증 및 자동 반납 전용
 
         // 월드 상태 스냅샷 클라이언트 브로드캐스트 (20Hz)

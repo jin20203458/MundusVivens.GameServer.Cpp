@@ -574,62 +574,84 @@ public:
 
         auto& target_loc = reg.get<LocationComp>(combat.target_entity);
 
-        // 타겟 반대 방향 벡터 계산
-        float dx = loc.x - target_loc.x;
-        float dz = loc.z - target_loc.z;
-        float dist = std::sqrt(dx * dx + dz * dz);
-
-        float dir_x = 1.0f;
-        float dir_z = 0.0f;
-        if (dist > 0.01f) {
-            dir_x = dx / dist;
-            dir_z = dz / dist;
-        } else {
-            // 거리가 너무 가까우면 랜덤 방향 설정
-            dir_x = (rand() % 200 - 100) / 100.0f;
-            dir_z = (rand() % 200 - 100) / 100.0f;
-            float r_dist = std::sqrt(dir_x * dir_x + dir_z * dir_z);
-            if (r_dist > 0.0f) {
-                dir_x /= r_dist;
-                dir_z /= r_dist;
-            }
-        }
-
-        float flee_distance = 15.0f;
-        float dest_x = std::clamp(loc.x + dir_x * flee_distance, 5.0f, 1995.0f);
-        float dest_z = std::clamp(loc.z + dir_z * flee_distance, 5.0f, 1995.0f);
-
-        // GridMap 경계 제한 및 이동성 확인 (벽 피하기)
-        if (ctx.grid_map) {
-            int gx = static_cast<int>(dest_x);
-            int gz = static_cast<int>(dest_z);
-            if (!ctx.grid_map->IsWalkable(gx, gz)) {
-                // 회전 시도 (+45도, -45도 등)
-                float angles[] = { 0.785f, -0.785f, 1.57f, -1.57f };
-                bool found = false;
-                for (float angle : angles) {
-                    float rx = dir_x * std::cos(angle) - dir_z * std::sin(angle);
-                    float rz = dir_x * std::sin(angle) + dir_z * std::cos(angle);
-                    float test_x = std::clamp(loc.x + rx * flee_distance, 5.0f, 1995.0f);
-                    float test_z = std::clamp(loc.z + rz * flee_distance, 5.0f, 1995.0f);
-                    int tgx = static_cast<int>(test_x);
-                    int tgz = static_cast<int>(test_z);
-                    if (ctx.grid_map->IsWalkable(tgx, tgz)) {
-                        dest_x = test_x;
-                        dest_z = test_z;
-                        found = true;
-                        break;
+        // 도주 목적지 재계산 여부 결정 (경로 탐색 스래싱 방지)
+        bool need_recalculate = false;
+        if (toil.state != ToilState::Moving) {
+            need_recalculate = true;
+        } else if (reg.all_of<PathfindingComp>(entity)) {
+            auto& path = reg.get<PathfindingComp>(entity);
+            if (path.waypoints.empty()) {
+                need_recalculate = true;
+            } else {
+                float dist_to_dest = std::sqrt(std::pow(loc.x - job.target_x, 2) + std::pow(loc.z - job.target_z, 2));
+                if (dist_to_dest < 2.0f) {
+                    need_recalculate = true;
+                } else {
+                    // 20틱(1초)마다 방향 재보정 (매 프레임 재계산으로 인한 스래싱 방지, 각 엔티티 틱 오프셋 분산)
+                    if (ctx.current_tick && ((*ctx.current_tick + static_cast<int>(entity)) % 20 == 0)) {
+                        need_recalculate = true;
                     }
                 }
-                if (!found) {
-                    dest_x = std::clamp(loc.x, 5.0f, 1995.0f);
-                    dest_z = std::clamp(loc.z, 5.0f, 1995.0f);
-                }
             }
+        } else {
+            need_recalculate = true;
         }
 
-        // 목적지 설정 및 이동 트리거 (A* 활용)
-        if (std::abs(job.target_x - dest_x) > 1.0f || std::abs(job.target_z - dest_z) > 1.0f) {
+        if (need_recalculate) {
+            // 타겟 반대 방향 벡터 계산
+            float dx = loc.x - target_loc.x;
+            float dz = loc.z - target_loc.z;
+            float dist = std::sqrt(dx * dx + dz * dz);
+
+            float dir_x = 1.0f;
+            float dir_z = 0.0f;
+            if (dist > 0.01f) {
+                dir_x = dx / dist;
+                dir_z = dz / dist;
+            } else {
+                // 거리가 너무 가까우면 랜덤 방향 설정
+                dir_x = (rand() % 200 - 100) / 100.0f;
+                dir_z = (rand() % 200 - 100) / 100.0f;
+                float r_dist = std::sqrt(dir_x * dir_x + dir_z * dir_z);
+                if (r_dist > 0.0f) {
+                    dir_x /= r_dist;
+                    dir_z /= r_dist;
+                }
+            }
+
+            float flee_distance = 15.0f;
+            float dest_x = std::clamp(loc.x + dir_x * flee_distance, 5.0f, 1995.0f);
+            float dest_z = std::clamp(loc.z + dir_z * flee_distance, 5.0f, 1995.0f);
+
+            // GridMap 경계 제한 및 이동성 확인 (벽 피하기)
+            if (ctx.grid_map) {
+                int gx = static_cast<int>(dest_x);
+                int gz = static_cast<int>(dest_z);
+                if (!ctx.grid_map->IsWalkable(gx, gz)) {
+                    // 회전 시도 (+45도, -45도 등)
+                    float angles[] = { 0.785f, -0.785f, 1.57f, -1.57f };
+                    bool found = false;
+                    for (float angle : angles) {
+                        float rx = dir_x * std::cos(angle) - dir_z * std::sin(angle);
+                        float rz = dir_x * std::sin(angle) + dir_z * std::cos(angle);
+                        float test_x = std::clamp(loc.x + rx * flee_distance, 5.0f, 1995.0f);
+                        float test_z = std::clamp(loc.z + rz * flee_distance, 5.0f, 1995.0f);
+                        int tgx = static_cast<int>(test_x);
+                        int tgz = static_cast<int>(test_z);
+                        if (ctx.grid_map->IsWalkable(tgx, tgz)) {
+                            dest_x = test_x;
+                            dest_z = test_z;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        dest_x = std::clamp(loc.x, 5.0f, 1995.0f);
+                        dest_z = std::clamp(loc.z, 5.0f, 1995.0f);
+                    }
+                }
+            }
+
             job.target_x = dest_x;
             job.target_z = dest_z;
             job.target_location = "Wilderness";
@@ -650,6 +672,141 @@ public:
     }
 };
 
+// 🆕 조건 노드: 배회 가능 상태(Idle) 검사
+class ConditionCanWander : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        // C# 고차원 Job이 활성화되어 있으면 배회 금지
+        if (reg.all_of<JobComp>(entity)) {
+            auto& job = reg.get<JobComp>(entity);
+            if (job.is_active) {
+                return NodeStatus::Failure;
+            }
+        }
+        
+        // 생체 위기 대처 중이면 배회 금지
+        if (reg.all_of<NeedsComp>(entity)) {
+            auto& needs = reg.get<NeedsComp>(entity);
+            if (needs.is_resolving_survival) {
+                return NodeStatus::Failure;
+            }
+        }
+
+        // 전투 중이면 배회 금지
+        if (reg.all_of<CombatComp>(entity)) {
+            auto& combat = reg.get<CombatComp>(entity);
+            if (combat.target_entity != entt::null && reg.valid(combat.target_entity)) {
+                return NodeStatus::Failure;
+            }
+        }
+
+        // 바쁜 상태면 배회 금지
+        if (reg.all_of<BusyTag>(entity)) {
+            return NodeStatus::Failure;
+        }
+
+        return NodeStatus::Success;
+    }
+};
+
+// 🆕 실행 노드: 서식지 내 배회
+class ActionWander : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        auto& loc = reg.get<LocationComp>(entity);
+        auto& job = reg.get<JobComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+        auto& act = reg.get<ActivityComp>(entity);
+        auto& ctx = reg.ctx().get<BTContext>();
+        auto& identity = reg.get<IdentityComp>(entity);
+
+        // 1. 이미 이동 중인 경우 상태 유지
+        if (toil.state == ToilState::Moving) {
+            return NodeStatus::Running;
+        }
+
+        // 2. 목적지 도달하여 대기(Working) 중인 경우
+        if (toil.state == ToilState::Working && job.intent == "배회 중") {
+            if (toil.duration_ticks > 0) {
+                toil.duration_ticks--;
+                return NodeStatus::Running;
+            } else {
+                // 배회 완료
+                job.intent = "";
+                toil.state = ToilState::Idle;
+                toil.current_action = "";
+                act.current_activity = "대기";
+                return NodeStatus::Success;
+            }
+        }
+
+        // 3. 대기 상태일 때만 새로운 배회 목표 설정
+        if (toil.state == ToilState::Idle) {
+            // 배회 쿨타임 주기 위해 무작위 대기 (약 2.5% 확률로만 배회 시작, 2초에 한 번 꼴)
+            if (rand() % 40 != 0) {
+                toil.state = ToilState::Idle;
+                act.current_activity = "대기";
+                return NodeStatus::Running; 
+            }
+
+            float wander_range = 15.0f;
+            float target_x = 0.0f;
+            float target_z = 0.0f;
+            bool found = false;
+
+            // 최대 10회 랜덤 좌표 탐색
+            for (int i = 0; i < 10; ++i) {
+                float rx = (rand() % 200 - 100) / 100.0f * wander_range;
+                float rz = (rand() % 200 - 100) / 100.0f * wander_range;
+                float tx = std::clamp(loc.x + rx, 5.0f, 1995.0f);
+                float tz = std::clamp(loc.z + rz, 5.0f, 1995.0f);
+
+                if (ctx.grid_map && ctx.grid_map->IsWalkable(static_cast<int>(tx), static_cast<int>(tz))) {
+                    // 서식지(location_name) 유지성 검증
+                    if (ctx.location_registry) {
+                        std::string target_loc = ctx.location_registry->GetLocationNameAt(tx, tz);
+                        if (target_loc == loc.location_name) {
+                            target_x = tx;
+                            target_z = tz;
+                            found = true;
+                            break;
+                        }
+                    } else {
+                        target_x = tx;
+                        target_z = tz;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (found) {
+                job.target_x = target_x;
+                job.target_z = target_z;
+                job.target_location = loc.location_name;
+                job.intent = "배회 중";
+                job.priority = 0;
+                job.is_active = false; // C# Job이 아니므로 false 유지
+
+                if (reg.all_of<PathfindingComp>(entity)) {
+                    auto& path = reg.get<PathfindingComp>(entity);
+                    path.waypoints.clear();
+                    path.current_waypoint_index = 0;
+                }
+
+                toil.state = ToilState::Moving;
+                toil.current_action = "배회 중";
+                act.current_activity = "주변 배회 중";
+                std::cout << "🌲 [BT 배회 시작] " << identity.display_name << "이(가) 서식지 [" 
+                          << loc.location_name << "] 내에서 (" << target_x << ", " << target_z << ")로 배회를 시작합니다." << std::endl;
+                return NodeStatus::Running;
+            }
+        }
+
+        return NodeStatus::Failure;
+    }
+};
+
 // 🆕 실행 노드: 타겟 공격 또는 추격
 class ActionMeleeAttack : public BTNode {
 public:
@@ -660,6 +817,7 @@ public:
         auto& toil = reg.get<ToilComp>(entity);
         auto& act = reg.get<ActivityComp>(entity);
         auto& identity = reg.get<IdentityComp>(entity);
+        auto& ctx = reg.ctx().get<BTContext>();
 
         if (combat.target_entity == entt::null || !reg.valid(combat.target_entity)) {
             return NodeStatus::Failure;
@@ -719,6 +877,12 @@ public:
                   << target_ident.display_name << "을(를) 공격! (데미지: " << combat.attack_damage 
                   << ", 남은 HP: " << target_health.hp << "/" << target_health.max_hp << ")" << std::endl;
 
+        // 🆕 C# 대뇌에 피격 사건 보고
+        ctx.client->ReportCombatEventAsync(identity.npc_id, target_ident.npc_id, combat.attack_damage, "MeleeWeapon",
+            [](bool success) {
+                // 피격 보고 비동기 완료 콜백
+            });
+
         if (reg.all_of<BusyTag>(combat.target_entity)) {
             reg.erase<BusyTag>(combat.target_entity);
             std::cout << "💥 [BT 인터럽트] 피격당한 " << target_ident.display_name << "의 행동이 중단되었습니다." << std::endl;
@@ -744,6 +908,140 @@ public:
     }
 };
 
+// 🆕 조건 노드: 적대감(어그로)이 폭발하여 충동을 유발할 만큼 높은지 검사
+class ConditionIsAggroHigh : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        // 이미 명시적인 전투 타겟이 있다면 이 노드는 성공으로 흘리지 않고 Failure 반환
+        if (reg.all_of<CombatComp>(entity)) {
+            auto& combat = reg.get<CombatComp>(entity);
+            if (combat.target_entity != entt::null && reg.valid(combat.target_entity)) {
+                return NodeStatus::Failure; 
+            }
+        }
+        
+        if (!reg.all_of<AggroComp>(entity)) return NodeStatus::Failure;
+        auto& aggro = reg.get<AggroComp>(entity);
+        
+        if (aggro.aggro_score >= 100 && aggro.threat_entity != entt::null && reg.valid(aggro.threat_entity)) {
+            return NodeStatus::Success;
+        }
+        return NodeStatus::Failure;
+    }
+};
+
+// 🆕 실행 노드: 어그로 대상을 확인하고, 지성체일 경우 대뇌의 억제를 받거나, 몬스터일 경우 즉시 공격 개시
+class ActionInhibitOrAttack : public BTNode {
+public:
+    NodeStatus Tick(entt::registry& reg, entt::entity entity) override {
+        if (!reg.all_of<AggroComp>(entity)) return NodeStatus::Failure;
+        auto& aggro = reg.get<AggroComp>(entity);
+        auto& identity = reg.get<IdentityComp>(entity);
+        auto& toil = reg.get<ToilComp>(entity);
+        auto& act = reg.get<ActivityComp>(entity);
+        auto& ctx = reg.ctx().get<BTContext>();
+
+        entt::entity threat = aggro.threat_entity;
+        if (threat == entt::null || !reg.valid(threat)) {
+            aggro.aggro_score = 0;
+            aggro.is_inhibited = false;
+            return NodeStatus::Failure;
+        }
+
+        auto& threat_identity = reg.get<IdentityComp>(threat);
+
+        // 1. 비지성체(몬스터/동물)라면 억제 없이 즉시 공격 개시
+        bool is_sentient = true;
+        if (reg.all_of<SentienceComp>(entity)) {
+            is_sentient = reg.get<SentienceComp>(entity).is_sentient;
+        }
+
+        if (!is_sentient) {
+            auto& combat = reg.get_or_emplace<CombatComp>(entity);
+            combat.target_entity = threat;
+            aggro.aggro_score = 0; // 어그로 리셋 (실제 전투 돌입)
+            std::cout << "🐺 [BT 몬스터 본능] " << identity.display_name << "이(가) 침입자 " 
+                      << threat_identity.display_name << "을(를) 본능적으로 즉시 습격합니다!" << std::endl;
+            
+            toil.state = ToilState::Idle;
+            toil.duration_ticks = 0;
+            return NodeStatus::Success;
+        }
+
+        // 2. 지성체(인간형)라면 이성적 억제 판단 프로세스 돌입
+        if (!aggro.is_inhibited) {
+            // 최초 충동 억제 진입 -> C# 대뇌에 판단 승인 요청
+            aggro.is_inhibited = true;
+            aggro.inhibit_wait_ticks = 0;
+            
+            std::cout << "🧠 [BT 충동 억제] " << identity.display_name << "이(가) " 
+                      << threat_identity.display_name << "에 대한 적개심(Aggro: 100)으로 무기에 손을 올리며, 대뇌(C#) 판단을 대기합니다." << std::endl;
+
+            uint32_t npc_id = identity.npc_id;
+            uint32_t target_npc_id = threat_identity.npc_id;
+
+            // gRPC 비동기 호출
+            ctx.client->ThreatDetectedAsync(npc_id, target_npc_id, aggro.aggro_score,
+                [&ctx, entity, target_npc_id](bool success, int action_code) {
+                    ctx.grpc_queue->Push([success, action_code, entity, target_npc_id](entt::registry& inner_reg, TcpServer& inner_tcp, MundusVivens::AsyncGrpcClient& inner_client) {
+                        if (!inner_reg.valid(entity) || !inner_reg.all_of<AggroComp>(entity)) return;
+                        auto& inner_aggro = inner_reg.get<AggroComp>(entity);
+                        auto& inner_ident = inner_reg.get<IdentityComp>(entity);
+                        auto& ctx_inner = inner_reg.ctx().get<BTContext>();
+
+                        if (success) {
+                            if (action_code == 0) { // APPROVE (공격)
+                                auto& combat = inner_reg.get_or_emplace<CombatComp>(entity);
+                                combat.target_entity = inner_aggro.threat_entity;
+                                inner_aggro.aggro_score = 0;
+                                inner_aggro.is_inhibited = false;
+                                std::cout << "⚔️ [BT 억제 해제] C# 승인 하달! " << inner_ident.display_name 
+                                          << "이(가) 무기를 빼 들고 선제 공격을 감행합니다!" << std::endl;
+                            } else if (action_code == 2) { // SOCIALIZE (대화/시비)
+                                inner_aggro.aggro_score = 0; // 어그로 리셋
+                                inner_aggro.is_inhibited = false;
+                                
+                                // 30초(600틱) 동안 동일 대상에 대한 어그로 면제 설정 (gRPC 스팸 방지)
+                                auto& cd = inner_reg.get_or_emplace<CooldownComp>(entity);
+                                cd.cooldown_per_target[target_npc_id] = *ctx_inner.current_tick + 600;
+
+                                std::cout << "🗣️ [BT 이성 복구] C# 명령: 말싸움 유도! " << inner_ident.display_name 
+                                          << "이(가) 공격 충동을 억제하고 시비를 걸러 다가갑니다." << std::endl;
+                            } else { // REJECT (참기/도주)
+                                inner_aggro.aggro_score = 0;
+                                inner_aggro.is_inhibited = false;
+                                
+                                // 30초(600틱) 동안 동일 대상에 대한 어그로 면제 설정 (gRPC 스팸 방지)
+                                auto& cd = inner_reg.get_or_emplace<CooldownComp>(entity);
+                                cd.cooldown_per_target[target_npc_id] = *ctx_inner.current_tick + 600;
+
+                                std::cout << "🛡️ [BT 참기] C# 명령: 참거나 회피! " << inner_ident.display_name 
+                                          << "이(가) 화를 삭이고 전투를 회피합니다." << std::endl;
+                            }
+                        } else {
+                            // gRPC 실패 시 안전하게 억제 복구하고 틱 타임아웃에 맡김
+                            inner_aggro.is_inhibited = false;
+                        }
+                    });
+                });
+        }
+
+        // C# 응답 대기 중 (최대 100틱 = 5초 타임아웃 방지)
+        aggro.inhibit_wait_ticks++;
+        if (aggro.inhibit_wait_ticks > 100) {
+            std::cout << "⏳ [BT 억제 타임아웃] C# 대뇌 응답 지연으로 " << identity.display_name 
+                      << "의 적대 억제가 자동으로 풀려 화를 누그러뜨립니다." << std::endl;
+            aggro.aggro_score = 0;
+            aggro.is_inhibited = false;
+            return NodeStatus::Failure;
+        }
+
+        toil.state = ToilState::Interrupted;
+        act.current_activity = threat_identity.display_name + "와 대치 중 (생각하는 중)";
+        return NodeStatus::Running;
+    }
+};
+
 // 🆕 생존/전투 행동 트리 조립 팩토리 함수
 inline std::unique_ptr<BTNode> CreateSurvivalTree() {
     // Sequence (도주: 타겟 있음 + HP 낮음 ➔ 도주)
@@ -751,6 +1049,11 @@ inline std::unique_ptr<BTNode> CreateSurvivalTree() {
     flee_seq->AddChild(std::make_unique<ConditionHasCombatTarget>());
     flee_seq->AddChild(std::make_unique<ConditionIsLowHealth>());
     flee_seq->AddChild(std::make_unique<ActionFlee>());
+
+    // 🆕 Sequence (어그로 충동-억제 프로세스)
+    auto aggro_seq = std::make_unique<Sequence>();
+    aggro_seq->AddChild(std::make_unique<ConditionIsAggroHigh>());
+    aggro_seq->AddChild(std::make_unique<ActionInhibitOrAttack>());
 
     // Sequence (전투: 타겟 있음 ➔ 추격/공격)
     auto combat_seq = std::make_unique<Sequence>();
@@ -780,16 +1083,22 @@ inline std::unique_ptr<BTNode> CreateSurvivalTree() {
     auto sched_sleep_seq = std::make_unique<Sequence>();
     sched_sleep_seq->AddChild(std::make_unique<ConditionIsScheduledSleep>());
     sched_sleep_seq->AddChild(std::make_unique<ActionInteractFurniture>());
+
+    // 🆕 Sequence (배회)
+    auto wander_seq = std::make_unique<Sequence>();
+    wander_seq->AddChild(std::make_unique<ConditionCanWander>());
+    wander_seq->AddChild(std::make_unique<ActionWander>());
     
-    // 루트 Selector (전투/도주가 항상 최우선)
+    // 루트 Selector (도주 및 충동 판단이 최우선)
     auto root = std::make_unique<Selector>();
     root->AddChild(std::move(flee_seq));
-    root->AddChild(std::move(combat_seq));
+    root->AddChild(std::move(aggro_seq));    // 🆕 2순위: 어그로 감지 및 대뇌 억제/승인
+    root->AddChild(std::move(combat_seq));   // 🆕 3순위: 승인되어 셋업된 전투 수행
     root->AddChild(std::move(hunger_seq));
     root->AddChild(std::move(fatigue_seq));
     root->AddChild(std::move(sched_eat_seq));
     root->AddChild(std::move(sched_sleep_seq));
-    
+    root->AddChild(std::move(wander_seq));    // 🆕 8순위: 아무것도 안 할 때의 배회
     return root;
 }
 

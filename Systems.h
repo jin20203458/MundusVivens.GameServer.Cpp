@@ -91,7 +91,7 @@ void SystemJobDriver(entt::registry& reg, LocationRegistry& grid, int current_ti
 
 void SystemPathfinding(entt::registry& reg, const GridMap& map);
 
-void SystemMovement(entt::registry& reg, LocationRegistry& grid, int tick);
+void SystemMovement(entt::registry& reg, LocationRegistry& grid, const GridMap& map, int tick);
 
 float GetLocationSocialModifier(LocationType type);
 
@@ -117,5 +117,8 @@ void SystemAffordanceResolver(entt::registry& reg, LocationRegistry& grid, int c
 
 // 🆕 행동 트리 실행 시스템
 void SystemBehaviorTree(entt::registry& reg);
+
+// 🆕 어그로 및 팩션 기반 감지 시스템
+void SystemPerception(entt::registry& reg, LocationRegistry& grid);
 
 

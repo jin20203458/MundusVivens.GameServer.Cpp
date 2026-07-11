@@ -41,6 +41,8 @@ public:
         return (static_cast<uint64_t>(static_cast<uint32_t>(cx)) << 32) | static_cast<uint32_t>(cz);
     }
 
+    std::string GetLocationNameAt(float x, float z) const;
+
 private:
     std::unordered_map<std::string, LocationMeta> location_centers_;        // 거점 이름별 좌표 및 메타 정보
     std::unordered_map<uint64_t, std::vector<entt::entity>> cell_entities_; // 공간 그리드 키별 엔티티 목록
