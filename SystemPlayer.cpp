@@ -172,8 +172,10 @@ void SystemPlayerCommands(entt::registry& reg, LocationRegistry& grid, TcpServer
                 loc.z = target_z;
                 grid.UpdateEntityPosition(player_ent, loc.x, loc.z, reg);
 
-                std::cout << "🏃 [TCP 플레이어 이동] 플레이어 " << identity.display_name 
-                          << " 이동: [" << old_loc << "] ➔ [" << new_loc << "]" << std::endl;
+                if (old_loc != new_loc) {
+                    std::cout << "🏃 [TCP 플레이어 구역 이동] 플레이어 " << identity.display_name 
+                              << " 이동: [" << old_loc << "] ➔ [" << new_loc << "]" << std::endl;
+                }
             }
         }
         else if (cmd.type == PlayerCommand::TalkToNpc) {
@@ -348,6 +350,75 @@ void SystemPlayerCommands(entt::registry& reg, LocationRegistry& grid, TcpServer
                         if (reg.valid(player_ent)) {
                             if (reg.all_of<BusyTag>(player_ent)) reg.erase<BusyTag>(player_ent);
                             if (reg.all_of<PlayerDialogueComp>(player_ent)) reg.erase<PlayerDialogueComp>(player_ent);
+                        }
+                    });
+                }
+            );
+        }
+        else if (cmd.type == PlayerCommand::GetAgentStatus) {
+            mundusvivens::GetAgentStatusRequest req;
+            if (!req.ParseFromArray(cmd.payload.data(), static_cast<int>(cmd.payload.size()))) continue;
+
+            uint32_t agent_id = req.agent_id();
+            uint32_t session_idx = cmd.session_index;
+
+            auto session = tcp.GetSession(session_idx);
+            if (session) session->IncrementPendingGrpc();
+
+            async_client.GetAgentStatusAsync(agent_id,
+                [&grpc_queue, session_idx, agent_id, session](bool success, const MundusVivens::AgentStatus& status) {
+                    if (session) session->DecrementPendingGrpc();
+                    grpc_queue.Push([success, status, session_idx, agent_id](entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
+                        mundusvivens::GetAgentStatusResponse resp;
+                        if (success) {
+                            resp.set_name(status.name);
+                            auto* loc = resp.mutable_location();
+                            loc->set_name(status.location);
+                            auto* pos = loc->mutable_position();
+                            pos->set_x(status.x);
+                            pos->set_y(status.y);
+                            pos->set_z(status.z);
+                            resp.set_emotion(status.emotion);
+                            resp.set_activity(status.activity);
+
+                            // C#에서 온 기억 목록 복사
+                            for (const auto& mem : status.memories) {
+                                resp.add_memories(mem);
+                            }
+
+                            // C++ 내의 관계 정보 가져와서 기억 목록 끝에 덧붙여 전송
+                            if (reg.ctx().contains<EntityIndex>()) {
+                                auto& index = reg.ctx().get<EntityIndex>();
+                                auto it = index.by_npc_id.find(agent_id);
+                                if (it != index.by_npc_id.end()) {
+                                    entt::entity npc_ent = it->second;
+                                    if (reg.valid(npc_ent) && reg.all_of<RelationshipCacheComp>(npc_ent)) {
+                                        const auto& rel_cache = reg.get<RelationshipCacheComp>(npc_ent);
+                                        for (const auto& pair : rel_cache.relationships) {
+                                            uint32_t target_id = pair.first;
+                                            const auto& rel = pair.second;
+
+                                            std::string target_name = "알 수 없음";
+                                            auto target_it = index.by_npc_id.find(target_id);
+                                            if (target_it != index.by_npc_id.end()) {
+                                                entt::entity target_ent = target_it->second;
+                                                if (reg.valid(target_ent) && reg.all_of<IdentityComp>(target_ent)) {
+                                                    target_name = reg.get<IdentityComp>(target_ent).display_name;
+                                                }
+                                            }
+                                            resp.add_memories("[관계] " + target_name + ": 호감도 " + std::to_string(rel.liking) + " / 신뢰도 " + std::to_string(rel.trust));
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            resp.set_name("조회 실패");
+                        }
+
+                        std::string serialized;
+                        if (resp.SerializeToString(&serialized)) {
+                            tcp.SendTo(session_idx, PacketId::SC_GET_AGENT_STATUS_ACK,
+                                reinterpret_cast<const uint8_t*>(serialized.data()), serialized.size());
                         }
                     });
                 }

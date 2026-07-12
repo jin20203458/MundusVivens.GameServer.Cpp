@@ -168,3 +168,13 @@ std::vector<entt::entity> LocationRegistry::GetNearbyEntities(float x, float z, 
     return result;
 }
 
+void LocationRegistry::RandomizeWithinRadius(float center_x, float center_z, float radius, float& out_x, float& out_z) {
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_real_distribution<float> angle_dist(0.0f, 6.2831853f); // 2π
+    std::uniform_real_distribution<float> unit_dist(0.0f, 1.0f);
+
+    float angle = angle_dist(rng);
+    float r = radius * std::sqrt(unit_dist(rng)); // sqrt로 면적 균등 분포 보장
+    out_x = center_x + r * std::cos(angle);
+    out_z = center_z + r * std::sin(angle);
+}

@@ -66,6 +66,15 @@ void SystemBroadcastWorldSnapshot(entt::registry& reg, TcpServer& tcp, int tick)
         snapshot->set_emotion(emo.current_emotion);
         snapshot->set_activity(act.current_activity);
 
+        if (reg.all_of<HealthComp>(entity)) {
+            const auto& health = reg.get<HealthComp>(entity);
+            snapshot->set_hp(health.hp);
+            snapshot->set_max_hp(health.max_hp);
+        } else {
+            snapshot->set_hp(100.0f);
+            snapshot->set_max_hp(100.0f);
+        }
+
         if (reg.all_of<VelocityComp>(entity)) {
             const auto& vel = reg.get<VelocityComp>(entity);
             auto* vel_vec = snapshot->mutable_velocity();

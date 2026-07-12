@@ -18,7 +18,8 @@ struct PlayerCommand {
         Move, 
         TalkToNpc, 
         PlayerMessage, 
-        EndDialogue 
+        EndDialogue,
+        GetAgentStatus
     };
     Type type;
     boost::container::small_vector<uint8_t, 64> payload; // 소형 패킷의 힙 할당 방지

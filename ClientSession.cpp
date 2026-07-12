@@ -218,6 +218,11 @@ void ClientSession::HandlePacket(uint16_t packet_id, const uint8_t* payload, siz
             server_.QueueCommand(std::move(cmd));
             break;
         }
+        case PacketId::CS_GET_AGENT_STATUS: {
+            cmd.type = PlayerCommand::GetAgentStatus;
+            server_.QueueCommand(std::move(cmd));
+            break;
+        }
         case PacketId::CS_HEARTBEAT: {
             Send(PacketId::SC_HEARTBEAT_ACK, nullptr, 0);
             break;

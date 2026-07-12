@@ -463,6 +463,14 @@ int main() {
                             if (idx_it != entity_index.by_npc_id.end()) {
                                 entt::entity target_ent = idx_it->second;
                                 if (inner_reg.valid(target_ent)) {
+                                    // 생체 위기(허기/피로) 로컬 처리 중인 NPC는 C# 계획 수신에서 제외
+                                    if (inner_reg.all_of<NeedsComp>(target_ent)) {
+                                        const auto& needs = inner_reg.get<NeedsComp>(target_ent);
+                                        if (needs.is_resolving_survival) {
+                                            continue;
+                                        }
+                                    }
+
                                     auto& job = inner_reg.get_or_emplace<JobComp>(target_ent);
                                     if (job.job_id == job_payload.job_id && job.is_active) {
                                         continue;
@@ -472,6 +480,8 @@ int main() {
                                     job.target_x = job_payload.target_x;
                                     job.target_y = job_payload.target_y;
                                     job.target_z = job_payload.target_z;
+                                    // Zone 중심 겹침 방지: 반경 내 랜덤 좌표로 분산
+                                    LocationRegistry::RandomizeWithinRadius(job.target_x, job.target_z, LocationRegistry::LOCATION_RADIUS, job.target_x, job.target_z);
                                     job.intent = job_payload.intent;
                                     job.target_agent_id = job_payload.target_agent_id;
                                     job.priority = job_payload.priority;

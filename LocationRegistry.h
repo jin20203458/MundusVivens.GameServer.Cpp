@@ -5,6 +5,7 @@
 #include <entt/entt.hpp>
 #include <cmath>
 #include <algorithm>
+#include <random>
 #include "Components.h"
 
 struct LocationMeta {
@@ -42,6 +43,9 @@ public:
     }
 
     std::string GetLocationNameAt(float x, float z) const;
+
+    // Zone 중심 좌표를 기준으로 LOCATION_RADIUS 내의 균등 분포 랜덤 좌표를 생성 (O(1), rejection-free)
+    static void RandomizeWithinRadius(float center_x, float center_z, float radius, float& out_x, float& out_z);
 
 private:
     std::unordered_map<std::string, LocationMeta> location_centers_;        // 거점 이름별 좌표 및 메타 정보

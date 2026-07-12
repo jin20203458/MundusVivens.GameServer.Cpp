@@ -65,7 +65,12 @@ public:
             // C++ 척수 수준 가상 Job 주입
             job.job_id = 999000;
             job.intent = "식사 중";
+            job.category = JobCategory::Eat;
             job.is_active = true;
+            job.target_location = "";
+            job.target_x = 0.0f;
+            job.target_y = 0.0f;
+            job.target_z = 0.0f;
             
             toil.state = ToilState::Idle;
             toil.duration_ticks = 0;
@@ -134,7 +139,12 @@ public:
             // C++ 척수 수준 가상 Job 주입
             job.job_id = 999001;
             job.intent = "취침 중";
+            job.category = JobCategory::Sleep;
             job.is_active = true;
+            job.target_location = "";
+            job.target_x = 0.0f;
+            job.target_y = 0.0f;
+            job.target_z = 0.0f;
             
             toil.state = ToilState::Idle;
             toil.duration_ticks = 0;
@@ -327,6 +337,13 @@ public:
             return NodeStatus::Success;
         }
         
+        float dx = job.target_x - loc.x;
+        float dz = job.target_z - loc.z;
+        float dist = std::sqrt(dx * dx + dz * dz);
+        if (dist < 0.8f) {
+            return NodeStatus::Success;
+        }
+        
         // 2. 이동 상태가 아니면 이동 시작 명령 하달
         if (toil.state != ToilState::Moving) {
             toil.state = ToilState::Moving;
@@ -370,7 +387,9 @@ public:
         bool is_sleeping = (needs.current_survival_type == SurvivalType::Fatigue);
         
         // 1. 가구 점유 시도 (최초 프레임)
-        if (needs.occupied_furniture == entt::null) {
+        if (needs.occupied_furniture == entt::null && 
+            toil.current_action != "Eating_On_Floor" && 
+            toil.current_action != "Sleeping_On_Floor") {
             entt::entity target_furn = entt::null;
             auto furn_view = reg.view<AffordanceComp, LocationComp, IdentityComp>();
             furn_view.each([&](entt::entity furn_ent, AffordanceComp& aff, LocationComp& furn_loc, IdentityComp& furn_id) {

@@ -18,6 +18,7 @@ namespace PacketId {
     constexpr uint16_t CS_TALK_TO_NPC      = 0x0003;  // NPC 대화 요청
     constexpr uint16_t CS_PLAYER_MESSAGE   = 0x0004;  // 플레이어 대화 메시지 전송
     constexpr uint16_t CS_END_DIALOGUE     = 0x0005;  // 대화 종료 요청
+    constexpr uint16_t CS_GET_AGENT_STATUS  = 0x0008;  // NPC 상세 상태/기억 조회 요청
     constexpr uint16_t CS_HEARTBEAT        = 0x00FF;  // 클라이언트 하트비트 (현재 미사용: 20Hz 브로드캐스트로 대체)
 
     // TODO: [Phase-Avatar] 플레이어 아바타 모드 구현 시 추가 예정
@@ -30,6 +31,7 @@ namespace PacketId {
     constexpr uint16_t SC_WORLD_SNAPSHOT   = 0x1002;  // 월드 NPC 상태 브로드캐스트
     constexpr uint16_t SC_DIALOGUE_EVENT   = 0x1004;  // NPC간 대화 이벤트 알림
     constexpr uint16_t SC_NPC_REPLY        = 0x1005;  // 플레이어에게 NPC 대사 전달
+    constexpr uint16_t SC_GET_AGENT_STATUS_ACK = 0x1008; // NPC 상세 상태/기억 조회 응답
     constexpr uint16_t SC_HEARTBEAT_ACK    = 0x10FF;  // 하트비트 응답 (현재 미사용)
 }
 

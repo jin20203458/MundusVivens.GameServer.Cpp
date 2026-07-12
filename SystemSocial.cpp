@@ -145,8 +145,8 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
         }
     });
 
-    constexpr float BASE_INITIATION_PROB = 0.15f; // 기본 주도 확률 (15%)
-    constexpr float MAX_DIALOGUE_DISTANCE = 20.0f; // 최대 대화 가능 거리
+    constexpr float BASE_INITIATION_PROB = 0.60f; // 기본 주도 확률 (60%로 상승)
+    constexpr float MAX_DIALOGUE_DISTANCE = 8.0f; // 최대 대화 가능 거리 (8미터로 확장)
 
     // 대화 후보가 될 수 있는 모든 NPC 수집 (PlayerTag, BusyTag 제외, Cooldown 및 소셜에너지 체크)
     auto all_candidates_view = reg.view<LocationComp, ActivityComp, IdentityComp>();
@@ -196,6 +196,10 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
             const auto& act = reg.get<ActivityComp>(neighbor);
             double roll = dis(gen);
             if (IsNPCFocusedOnActivity(act.current_activity, roll)) continue;
+
+            // 추가: 두 NPC가 서로 다른 구역/장소에 있는 경우 대화 불가하도록 설정
+            const auto& loc_c = reg.get<LocationComp>(neighbor);
+            if (loc_i.location_name != loc_c.location_name) continue;
 
             candidates.push_back(neighbor);
         }
@@ -580,6 +584,8 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
                                         job.target_x = nj.target_x;
                                         job.target_y = nj.target_y;
                                         job.target_z = nj.target_z;
+                                        // Zone 중심 겹침 방지: 반경 내 랜덤 좌표로 분산
+                                        LocationRegistry::RandomizeWithinRadius(job.target_x, job.target_z, LocationRegistry::LOCATION_RADIUS, job.target_x, job.target_z);
                                         job.intent = nj.intent;
                                         job.target_agent_id = nj.target_agent_id;
                                         job.priority = nj.priority;
@@ -681,14 +687,14 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
                             for (auto ent : group_participants) {
                                 if (reg.valid(ent)) {
                                     auto& cooldown = reg.get_or_emplace<CooldownComp>(ent);
-                                    cooldown.social_energy = std::max(0, cooldown.social_energy - 30);
-                                    cooldown.cognitive_refractory_until = tick + 3;
+                                    cooldown.social_energy = std::max(0, cooldown.social_energy - 10); // 소모 에너지 감소
+                                    cooldown.cognitive_refractory_until = tick + 1; // 대화 후 쿨다운 축소 (1틱)
                                     reg.get<ActivityComp>(ent).current_activity = "생각 정리 중";
                                     
                                     for (auto other : group_participants) {
                                         if (other == ent) continue;
                                         uint32_t other_id = reg.get<IdentityComp>(other).npc_id;
-                                        cooldown.cooldown_per_target[other_id] = tick + 6;
+                                        cooldown.cooldown_per_target[other_id] = tick + 2; // 상대별 쿨다운 축소
                                     }
 
                                     if (reg.all_of<BusyTag>(ent)) reg.erase<BusyTag>(ent);

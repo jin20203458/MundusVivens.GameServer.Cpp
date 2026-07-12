@@ -16,6 +16,8 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
             // target_location 이름이 있고 좌표가 (0,0)인 경우 사전 조회
             if (!job.target_location.empty() && target_x == 0.0f && target_z == 0.0f) {
                 map.GetLocationCoords(job.target_location, target_x, target_z);
+                // Zone 중심 겹침 방지: 반경 내 랜덤 좌표로 분산
+                LocationRegistry::RandomizeWithinRadius(target_x, target_z, LocationRegistry::LOCATION_RADIUS, target_x, target_z);
                 job.target_x = target_x;
                 job.target_z = target_z;
             }
@@ -60,9 +62,9 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
                         }
                         vel.speed = move_speed;
                         
-                        if (auto* ident = reg.try_get<IdentityComp>(entity)) {
-                            std::cout << "🧭 [경로 생성] " << ident->display_name << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z << ")로의 경로를 A*로 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
-                        }
+                        // if (auto* ident = reg.try_get<IdentityComp>(entity)) {
+                        //     std::cout << "🧭 [경로 생성] " << ident->display_name << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z << ")로의 경로를 A*로 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
+                        // }
                     } else {
                         // 경로 탐색 실패 또는 이미 도달함 -> 대기 상태 전환
                         toil.state = ToilState::Idle;
