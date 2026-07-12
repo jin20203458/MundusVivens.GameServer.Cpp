@@ -71,6 +71,7 @@ add_custom_command(
 
 add_executable(MundusVivensGameServer
     main.cpp
+    MSVCCompat.cpp
     MundusVivensClient.cpp
     MundusVivensClient.h
     Components.h

@@ -23,6 +23,7 @@ public:
     using SendPlayerMessageCallback = std::function<void(bool success, const std::string& reply)>;
     using EndDialogueCallback = std::function<void(bool success, const std::string& summary)>;
     using InjectBeliefCallback = std::function<void(bool success, const std::string& message)>;
+    using GetAgentStatusCallback = std::function<void(bool success, const AgentStatus& status)>;
 
     // 생성자에서 채널, GrpcContext, io_context를 모두 공유받음
     AsyncGrpcClient(std::shared_ptr<grpc::Channel> channel,
@@ -54,6 +55,7 @@ public:
 
     void ThreatDetectedAsync(uint32_t agent_id, uint32_t target_agent_id, int32_t aggro_score, ThreatDetectedCallback on_complete);
     void ReportCombatEventAsync(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete);
+    void GetAgentStatusAsync(uint32_t agent_id, GetAgentStatusCallback on_complete);
 
 
 private:
@@ -70,6 +72,7 @@ private:
     // 🆕 4단계 내부 코루틴 선언
     boost::asio::awaitable<void> DoThreatDetected(uint32_t agent_id, uint32_t target_agent_id, int32_t aggro_score, ThreatDetectedCallback on_complete);
     boost::asio::awaitable<void> DoReportCombatEvent(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete);
+    boost::asio::awaitable<void> DoGetAgentStatus(uint32_t agent_id, GetAgentStatusCallback on_complete);
 
     std::unique_ptr<mundusvivens::MundusVivensGrpc::Stub> stub_;
     agrpc::GrpcContext& grpc_ctx_;

@@ -453,6 +453,12 @@ void AsyncGrpcClient::ReportCombatEventAsync(uint32_t attacker_id, uint32_t vict
         boost::asio::detached);
 }
 
+void AsyncGrpcClient::GetAgentStatusAsync(uint32_t agent_id, GetAgentStatusCallback on_complete) {
+    boost::asio::co_spawn(grpc_ctx_,
+        DoGetAgentStatus(agent_id, std::move(on_complete)),
+        boost::asio::detached);
+}
+
 boost::asio::awaitable<void> AsyncGrpcClient::DoReportCombatEvent(uint32_t attacker_id, uint32_t victim_id, float damage, std::string weapon, ReportCombatEventCallback on_complete) {
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncReportCombatEvent>;
@@ -478,6 +484,42 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoReportCombatEvent(uint32_t attac
     } catch (const std::exception& e) {
         std::cerr << "❌ [Exception in ReportCombatEventAsync] " << e.what() << std::endl;
         on_complete(false);
+    }
+}
+
+boost::asio::awaitable<void> AsyncGrpcClient::DoGetAgentStatus(uint32_t agent_id, GetAgentStatusCallback on_complete) {
+    try {
+        using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncGetAgentStatus>;
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        mundusvivens::GetAgentStatusRequest request;
+        request.set_agent_id(agent_id);
+        mundusvivens::GetAgentStatusResponse response;
+
+        const grpc::Status status = co_await RPC::request(
+            grpc_ctx_, *stub_, context, request, response, boost::asio::use_awaitable
+        );
+
+        if (status.ok()) {
+            AgentStatus result;
+            result.name = response.name();
+            result.location = response.location().name();
+            result.x = response.location().position().x();
+            result.y = response.location().position().y();
+            result.z = response.location().position().z();
+            result.emotion = response.emotion();
+            result.activity = response.activity();
+            for (int i = 0; i < response.memories_size(); ++i) {
+                result.memories.push_back(response.memories(i));
+            }
+            on_complete(true, result);
+        } else {
+            on_complete(false, AgentStatus{});
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception in GetAgentStatusAsync] " << e.what() << std::endl;
+        on_complete(false, AgentStatus{});
     }
 }
 

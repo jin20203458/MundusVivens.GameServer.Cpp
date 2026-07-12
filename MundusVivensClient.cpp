@@ -10,40 +10,6 @@ namespace MundusVivens {
     }
 
 
-    AgentStatus MundusVivensClient::GetAgentStatus(uint32_t agent_id) {
-        // 1. 특정 에이전트 식별자(ID)를 요청 패킷에 세팅
-        mundusvivens::GetAgentStatusRequest request;
-        request.set_agent_id(agent_id);
-
-        mundusvivens::GetAgentStatusResponse response;
-        grpc::ClientContext context;
-
-        // 2. C# 서버로부터 해당 에이전트의 상태 데이터를 긁어옴
-        grpc::Status status = stub_->GetAgentStatus(&context, request, &response);
-
-        // 3. 수신 데이터를 C++용 상용 구조체(AgentStatus)로 매핑
-        AgentStatus result;
-        if (status.ok()) {
-            result.name = response.name();
-            result.location = response.location().name();
-            result.x = response.location().position().x();
-            result.y = response.location().position().y();
-            result.z = response.location().position().z();
-            result.emotion = response.emotion();
-            result.activity = response.activity();
-
-            // 에피소드 기억 목록을 std::vector에 누적
-            for (int i = 0; i < response.memories_size(); ++i) {
-                result.memories.push_back(response.memories(i));
-            }
-        }
-        else {
-            std::cerr << "[상태 조회 에러] gRPC 통신 실패: " << status.error_message() << std::endl;
-        }
-
-        return result;
-    }
-
     bool MundusVivensClient::InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, std::string& out_message) {
         // 1. 믿음(소문)을 주입할 대상 NPC, 소문의 주인공, 내용 패킷 세팅
         mundusvivens::InjectBeliefRequest request;

@@ -145,9 +145,8 @@ namespace MundusVivens {
 		MundusVivensClient(std::shared_ptr<grpc::Channel> channel);
 
 
-		// [예약] 특정 에이전트의 실시간 상태(위치, 감정, 에피소드 기억 요약 등)를 조회합니다.
-		// 유니티 ◄► C++ 간의 TCP 브릿지 패킷(예: CS_INSPECT_NPC_MEMORIES) 추가 시 활성화할 예정입니다.
-		AgentStatus GetAgentStatus(uint32_t agent_id);
+		// [Deprecated] 특정 에이전트의 실시간 상태 조회는 AsyncGrpcClient::GetAgentStatusAsync를 사용하세요.
+
 
 		// 특정 에이전트에게 믿음(소문)을 강제로 주입합니다.
 		bool InjectBelief(uint32_t target_agent_id, uint32_t subject_id, const std::string& content, mundusvivens::ProtoBeliefType belief_type, uint32_t source_agent_id, std::string& out_message);
