@@ -20,6 +20,11 @@ namespace PacketId {
     constexpr uint16_t CS_END_DIALOGUE     = 0x0005;  // 대화 종료 요청
     constexpr uint16_t CS_HEARTBEAT        = 0x00FF;  // 클라이언트 하트비트
 
+    // TODO: [Phase-Avatar] 플레이어 아바타 모드 구현 시 추가 예정
+    // constexpr uint16_t CS_PLAYER_ATTACK  = 0x0006;  // 플레이어 공격 (대상 NPC ID + 공격 유형)
+    // constexpr uint16_t CS_PLAYER_DEFEND  = 0x0007;  // 플레이어 방어/회피
+    // → SystemPlayer.cpp에 핸들러 추가 및 SystemSocial.cpp의 ThreatDetectedAsync 연동 필요
+
     // 서버 → 클라이언트 (SC)
     constexpr uint16_t SC_LOGIN_ACK        = 0x1001;  // 로그인 응답 + 초기 맵 정보
     constexpr uint16_t SC_WORLD_SNAPSHOT   = 0x1002;  // 월드 NPC 상태 브로드캐스트
