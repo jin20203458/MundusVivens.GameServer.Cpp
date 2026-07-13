@@ -151,12 +151,12 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
     // 대화 후보가 될 수 있는 모든 NPC 수집 (PlayerTag, BusyTag 제외, Cooldown 및 소셜에너지 체크)
     auto all_candidates_view = reg.view<LocationComp, ActivityComp, IdentityComp>();
     std::vector<entt::entity> all_npcs;
-    for (auto ent : all_candidates_view) {
+    all_candidates_view.each([&](entt::entity ent, LocationComp&, ActivityComp&, IdentityComp&) {
         if (!reg.all_of<PlayerTag>(ent)) {
-            if (reg.all_of<HealthComp>(ent) && reg.get<HealthComp>(ent).is_dead) continue;
+            if (reg.all_of<HealthComp>(ent) && reg.get<HealthComp>(ent).is_dead) return;
             all_npcs.push_back(ent);
         }
-    }
+    });
 
     std::unordered_set<entt::entity> processed_entities;
 
