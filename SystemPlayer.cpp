@@ -5,6 +5,7 @@
 #include "mundus_vivens.pb.h"
 #include "GrpcResultQueue.h"
 #include <iostream>
+#include <tracy/Tracy.hpp>
 
 // 7. 연결 끊긴 플레이어의 대화 및 좀비 엔티티 정리 시스템
 void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue) {
@@ -69,6 +70,7 @@ void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, LocationRegis
 // 8. 플레이어 커맨드 처리 시스템
 void SystemPlayerCommands(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp,
                           MundusVivens::AsyncGrpcClient& async_client, int tick, GrpcResultQueue& grpc_queue) {
+    ZoneScoped;
     static std::vector<PlayerCommand> local_commands;
     tcp.DrainPlayerCommands(local_commands);
     

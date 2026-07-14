@@ -2,9 +2,11 @@
 #include "Components.h"
 #include <iostream>
 #include <cmath>
+#include <tracy/Tracy.hpp>
 
 // A* 길찾기 적용 시스템
 void SystemPathfinding(entt::registry& reg, const GridMap& map) {
+    ZoneScoped;
     auto view = reg.view<JobComp, ToilComp, LocationComp>();
     view.each([&](entt::entity entity, JobComp& job, ToilComp& toil, LocationComp& loc) {
         if (toil.state == ToilState::Moving) {
@@ -83,6 +85,7 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
 
 // 🆕 Axis 3: 실시간 20Hz 이동 처리 시스템
 void SystemMovement(entt::registry& reg, LocationRegistry& grid, const GridMap& map, int tick) {
+    ZoneScoped;
     constexpr float dt = 0.05f; // 20Hz 기준 dt
 
     auto view = reg.view<LocationComp, ToilComp, PathfindingComp, VelocityComp, JobComp, IdentityComp>();

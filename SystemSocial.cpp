@@ -3,6 +3,7 @@
 #include "TcpServer.h"
 #include "GrpcResultQueue.h"
 #include <iostream>
+#include <tracy/Tracy.hpp>
 #include <algorithm>
 #include <unordered_set>
 #include <random>
@@ -128,6 +129,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
                              MundusVivens::AsyncGrpcClient& client, int tick,
                              std::mt19937& gen, std::uniform_real_distribution<>& dis,
                              GrpcResultQueue& grpc_queue) {
+    ZoneScoped;
     
     // 매 틱마다 모든 NPC의 사회적 에너지를 미세하게 회복
     auto recovery_view = reg.view<CooldownComp, LocationComp>();

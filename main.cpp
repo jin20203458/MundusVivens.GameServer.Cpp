@@ -3,6 +3,7 @@
 #include <chrono>
 #include <fstream>
 #include <sstream>
+#include <tracy/Tracy.hpp>
 
 #include <random>
 #include <vector>
@@ -558,6 +559,7 @@ int main() {
                 });
             }
         }
+        FrameMark;
     }, keep_running);
 
 

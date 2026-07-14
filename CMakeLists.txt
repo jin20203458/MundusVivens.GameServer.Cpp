@@ -17,6 +17,11 @@ find_package(Boost REQUIRED COMPONENTS system)
 find_package(asio-grpc REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
+option(ENABLE_PROFILING "Enable Tracy Profiler" ON)
+if(ENABLE_PROFILING)
+    find_package(Tracy CONFIG REQUIRED)
+endif()
+
 
 # MSVC 한글 인코딩 에러 방지 (/utf-8 flag)
 if (MSVC)
@@ -119,3 +124,8 @@ target_link_libraries(MundusVivensGameServer PRIVATE
     asio-grpc::asio-grpc
     nlohmann_json::nlohmann_json
 )
+
+if(ENABLE_PROFILING)
+    target_compile_definitions(MundusVivensGameServer PRIVATE TRACY_ENABLE)
+    target_link_libraries(MundusVivensGameServer PRIVATE Tracy::TracyClient)
+endif()

@@ -3,6 +3,7 @@
 #include <vector>
 #include <functional>
 #include <entt/entt.hpp>
+#include <tracy/Tracy.hpp>
 
 class TcpServer;
 namespace MundusVivens { class AsyncGrpcClient; }
@@ -14,6 +15,7 @@ public:
 
     // 백그라운드 스레드에서 호출 (스레드 안전)
     void Push(Task task) {
+        ZoneScopedN("Queue Push");
         std::lock_guard<std::mutex> lock(mutex_);
         write_buffer_.push_back(std::move(task));
     }
@@ -21,9 +23,11 @@ public:
     // 메인 스레드에서 매 틱마다 호출 (더블 버퍼 스왑으로 락 시간 최소화)
     void Drain(entt::registry& reg, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client) {
         {
+            ZoneScopedN("Queue Drain Swap");
             std::lock_guard<std::mutex> lock(mutex_);
             std::swap(write_buffer_, read_buffer_);
         }
+        ZoneScopedN("Queue Drain Dispatch");
         for (auto& task : read_buffer_) {
             if (task) {
                 task(reg, tcp, async_client);
