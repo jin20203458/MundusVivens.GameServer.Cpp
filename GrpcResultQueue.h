@@ -3,7 +3,7 @@
 #include <vector>
 #include <functional>
 #include <entt/entt.hpp>
-#include <tracy/Tracy.hpp>
+#include "TracyIntegration.h"
 
 class TcpServer;
 namespace MundusVivens { class AsyncGrpcClient; }

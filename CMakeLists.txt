@@ -20,6 +20,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 option(ENABLE_PROFILING "Enable Tracy Profiler" ON)
 if(ENABLE_PROFILING)
     find_package(Tracy CONFIG REQUIRED)
+    add_compile_definitions(TRACY_ENABLE TRACY_ON_DEMAND TRACY_NO_BROADCAST)
 endif()
 
 
@@ -74,7 +75,7 @@ add_custom_command(
 # Target definition
 # -------------------------------------------------------------------------
 
-add_executable(MundusVivensGameServer
+set(SERVER_SOURCES
     main.cpp
     MSVCCompat.cpp
     MundusVivensClient.cpp
@@ -104,16 +105,31 @@ add_executable(MundusVivensGameServer
     TcpServer.cpp
     ClientSession.h
     ClientSession.cpp
+    Benchmark.h
+    Benchmark.cpp
     ${GEN_PROTO_SRC}
     ${GEN_PROTO_HDR}
     ${GEN_GRPC_SRC}
     ${GEN_GRPC_HDR}
 )
 
+if(ENABLE_PROFILING)
+    list(APPEND SERVER_SOURCES TracyClient.cpp)
+endif()
+
+add_executable(MundusVivensGameServer ${SERVER_SOURCES})
+
 target_include_directories(MundusVivensGameServer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${GEN_SRC_DIR}
 )
+
+if(ENABLE_PROFILING)
+    target_include_directories(MundusVivensGameServer PRIVATE
+        $<TARGET_PROPERTY:Tracy::TracyClient,INTERFACE_INCLUDE_DIRECTORIES>
+        "C:/Users/adg01/vcpkg/buildtrees/tracy/src/v0.13.1-f213d4969a.clean/public"
+    )
+endif()
 
 # Link gRPC and Protobuf libraries
 target_link_libraries(MundusVivensGameServer PRIVATE
@@ -124,8 +140,3 @@ target_link_libraries(MundusVivensGameServer PRIVATE
     asio-grpc::asio-grpc
     nlohmann_json::nlohmann_json
 )
-
-if(ENABLE_PROFILING)
-    target_compile_definitions(MundusVivensGameServer PRIVATE TRACY_ENABLE)
-    target_link_libraries(MundusVivensGameServer PRIVATE Tracy::TracyClient)
-endif()

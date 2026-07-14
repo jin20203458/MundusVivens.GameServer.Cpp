@@ -3,6 +3,7 @@
 #include <agrpc/client_rpc.hpp>
 #include <iostream>
 #include <chrono>
+#include "TracyIntegration.h"
 
 namespace MundusVivens {
 
@@ -65,6 +66,7 @@ void AsyncGrpcClient::InjectBeliefAsync(uint32_t target_agent_id, uint32_t subje
 // -------------------------------------------------------------
 
 boost::asio::awaitable<void> AsyncGrpcClient::DoProcessWorldTick(int32_t tick, TickCallback on_complete) {
+    ZoneScopedN("gRPC Tick Task");
     try {
         // agrpc::ClientRPC 를 사용하여 비동기 gRPC 요청을 준비하고 전송합니다
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncProcessWorldTick>;
@@ -179,6 +181,7 @@ boost::asio::awaitable<void> AsyncGrpcClient::DoTriggerDialogue(std::vector<uint
 }
 
 boost::asio::awaitable<void> AsyncGrpcClient::DoBatchUpdateStatus(std::vector<AgentStatusUpdate> updates, StatusCallback on_complete) {
+    ZoneScopedN("gRPC Status Task");
     try {
         using RPC = agrpc::ClientRPC<&mundusvivens::MundusVivensGrpc::Stub::PrepareAsyncBatchUpdateAgentStatus>;
         grpc::ClientContext context;

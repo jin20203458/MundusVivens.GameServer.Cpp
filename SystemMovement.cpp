@@ -2,7 +2,7 @@
 #include "Components.h"
 #include <iostream>
 #include <cmath>
-#include <tracy/Tracy.hpp>
+#include "TracyIntegration.h"
 
 // A* 길찾기 적용 시스템
 void SystemPathfinding(entt::registry& reg, const GridMap& map) {

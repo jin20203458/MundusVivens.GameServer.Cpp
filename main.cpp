@@ -2,8 +2,9 @@
 #include <thread>
 #include <chrono>
 #include <fstream>
+#include <filesystem>
 #include <sstream>
-#include <tracy/Tracy.hpp>
+#include "TracyIntegration.h"
 
 #include <random>
 #include <vector>
@@ -26,6 +27,7 @@
 #include "GridMap.h"
 #include "ClientSession.h"
 #include "GrpcResultQueue.h"
+#include "Benchmark.h"
 
 
 // MSVC STL workaround stubs moved to MSVCCompat.cpp
@@ -78,7 +80,11 @@ void SystemDeath(entt::registry& reg) {
     });
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (MundusVivens::RunBenchmarkIfRequested(argc, argv)) {
+        return 0;
+    }
+
 #ifdef _WIN32
     // Windows 환경의 콘솔창에서 한글 깨짐을 방지하기 위한 UTF-8(코드페이지 65001) 설정
     system("chcp 65001 > nul");
@@ -136,7 +142,17 @@ int main() {
     //  시뮬레이션 설정 파일 로드 및 컨텍스트에 등록
     SimulationSettings sim_settings;
     {
-        std::ifstream file("shared_simulation_settings.json");
+        // 1차: 현재 디렉터리(exe 실행 위치)에서 탐색
+        std::string settings_path = "shared_simulation_settings.json";
+        if (!std::filesystem::exists(settings_path)) {
+            // 2차: 부모 디렉터리(프로젝트 루트)에서 재탐색 — dotnet run 없이 exe 직접 실행 시 대응
+            std::filesystem::path parent_path = std::filesystem::current_path().parent_path().parent_path().parent_path() / "shared_simulation_settings.json";
+            if (std::filesystem::exists(parent_path)) {
+                settings_path = parent_path.string();
+                std::cout << "📂 [Settings] 빌드 루트에서 설정 파일을 로드합니다: " << settings_path << std::endl;
+            }
+        }
+        std::ifstream file(settings_path);
         if (!file.is_open()) {
             std::cerr << "⚠️ [Settings] shared_simulation_settings.json을 찾을 수 없어 기본 상수를 사용합니다 (Speed: 2.0, Ticks/Hour: 200)." << std::endl;
         } else {

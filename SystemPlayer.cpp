@@ -5,7 +5,7 @@
 #include "mundus_vivens.pb.h"
 #include "GrpcResultQueue.h"
 #include <iostream>
-#include <tracy/Tracy.hpp>
+#include "TracyIntegration.h"
 
 // 7. 연결 끊긴 플레이어의 대화 및 좀비 엔티티 정리 시스템
 void SystemCleanupDisconnectedPlayerDialogues(entt::registry& reg, LocationRegistry& grid, TcpServer& tcp, MundusVivens::AsyncGrpcClient& async_client, GrpcResultQueue& grpc_queue) {

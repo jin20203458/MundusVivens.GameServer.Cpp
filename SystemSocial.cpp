@@ -3,7 +3,7 @@
 #include "TcpServer.h"
 #include "GrpcResultQueue.h"
 #include <iostream>
-#include <tracy/Tracy.hpp>
+#include "TracyIntegration.h"
 #include <algorithm>
 #include <unordered_set>
 #include <random>

@@ -40,11 +40,20 @@ if (Test-Path $CsProto) {
 # 1.6. shared_simulation_settings.json 동기화
 $CsSettings = "../MundusVivens/shared_simulation_settings.json"
 $CppSettings = "shared_simulation_settings.json"
+$CppSettingsBuildOut = "out/build/windows-default/shared_simulation_settings.json"
 
 if (Test-Path $CsSettings) {
     if (-not (Test-Path $CppSettings) -or (Get-FileHash $CppSettings).Hash -ne (Get-FileHash $CsSettings).Hash) {
         Copy-Item -Path $CsSettings -Destination $CppSettings -Force
         Write-Host "🔄 [Settings Sync] shared_simulation_settings.json 파일이 동기화되었습니다." -ForegroundColor Green
+    }
+    # exe 실행 디렉터리에도 복사 (런타임 경로 기준)
+    $buildOutDir = "out/build/windows-default"
+    if (Test-Path $buildOutDir) {
+        if (-not (Test-Path $CppSettingsBuildOut) -or (Get-FileHash $CppSettingsBuildOut).Hash -ne (Get-FileHash $CsSettings).Hash) {
+            Copy-Item -Path $CsSettings -Destination $CppSettingsBuildOut -Force
+            Write-Host "🔄 [Settings Sync] 빌드 출력 디렉터리에도 설정 파일을 복사했습니다." -ForegroundColor Green
+        }
     }
 }
 
@@ -68,5 +77,5 @@ if (-not $vcvars) {
 }
 
 # 3. 개발자 쉘을 로드하여 빌드 실행
-cmd.exe /c "call `"$vcvars`" && cmake --preset windows-default && cmake --build out/build/windows-default --config Debug"
+cmd.exe /c "call `"$vcvars`" && cmake --preset windows-default && cmake --build out/build/windows-default --config Release"
 

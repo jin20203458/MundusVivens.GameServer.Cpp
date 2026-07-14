@@ -4,6 +4,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include "TracyIntegration.h"
 
 TcpServer::TcpServer(boost::asio::io_context& io, uint16_t port)
     : io_(io), acceptor_(io, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)) {
@@ -95,6 +96,7 @@ std::shared_ptr<ClientSession> TcpServer::GetSession(uint32_t session_index) {
 }
 
 void TcpServer::DrainPlayerCommands(std::vector<PlayerCommand>& out) {
+    ZoneScopedN("TCP Command Drain");
     out.clear();
     std::lock_guard<std::mutex> lock(commands_mutex_);
     pending_commands_.swap(out);
@@ -118,6 +120,7 @@ void TcpServer::UnregisterSession(uint32_t session_index) {
 }
 
 void TcpServer::QueueCommand(PlayerCommand cmd) {
+    ZoneScopedN("TCP Command Push");
     std::lock_guard<std::mutex> lock(commands_mutex_);
     pending_commands_.push_back(std::move(cmd));
 }

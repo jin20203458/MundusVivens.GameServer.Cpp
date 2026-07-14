@@ -10,6 +10,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include "TracyIntegration.h"
 
 ClientSession::ClientSession(boost::asio::ip::tcp::socket socket, TcpServer& server, uint32_t index)
     : socket_(std::move(socket)), server_(server), index_(index), backpressure_timer_(socket_.get_executor()), write_channel_(socket_.get_executor(), 1024) {
@@ -38,6 +39,7 @@ ClientSession::~ClientSession() {
 }
 
 boost::asio::awaitable<void> ClientSession::Run() {
+    ZoneScopedN("TCP Client Run Loop");
     auto self = shared_from_this(); // 비동기 작업 중 객체 수명 보장
     try {
         // Nagle 알고리즘 비활성화 
@@ -108,6 +110,7 @@ boost::asio::awaitable<void> ClientSession::Run() {
 }
 
 void ClientSession::Send(uint16_t packet_id, const uint8_t* payload, size_t size) {
+    ZoneScopedN("TCP Queue Send");
     uint16_t total_length = static_cast<uint16_t>(HEADER_SIZE + size);
     PacketBuffer buf;
     buf.size = total_length;
@@ -140,6 +143,7 @@ void ClientSession::Send(uint16_t packet_id, const uint8_t* payload, size_t size
 }
 
 boost::asio::awaitable<void> ClientSession::WriteLoop() {
+    ZoneScopedN("TCP Client Write Loop");
     auto self = shared_from_this();
     try {
         while (true) {
@@ -188,6 +192,7 @@ boost::asio::awaitable<void> ClientSession::WriteLoop() {
 }
 
 void ClientSession::HandlePacket(uint16_t packet_id, const uint8_t* payload, size_t size) {
+    ZoneScopedN("TCP Handle Packet");
     PlayerCommand cmd;
     cmd.session_index = index_;
     cmd.payload.assign(payload, payload + size); // 힙 할당 방지 (small_vector)
