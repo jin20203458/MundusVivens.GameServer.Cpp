@@ -132,9 +132,9 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
     // 매 틱마다 모든 NPC의 사회적 에너지를 미세하게 회복
     auto recovery_view = reg.view<CooldownComp, LocationComp>();
     recovery_view.each([tick](CooldownComp& cooldown, LocationComp& loc) {
-        // Tavern/술집에 있으면 매 틱 1 회복. 일반 장소에서는 10틱에 1 회복
-        bool in_tavern = (loc.type == LocationType::Tavern);
-        if (in_tavern) {
+        // Pub/술집에 있으면 매 틱 1 회복. 일반 장소에서는 10틱에 1 회복
+        bool in_pub = (loc.type == LocationType::Pub);
+        if (in_pub) {
             if (cooldown.social_energy < cooldown.max_social_energy) {
                 cooldown.social_energy = std::min(cooldown.max_social_energy, cooldown.social_energy + 1);
             }
@@ -720,7 +720,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
 // 장소별 사회적 맥락 가중치 반환 헬퍼
 float GetLocationSocialModifier(LocationType type) {
     switch (type) {
-        case LocationType::Tavern:  return 1.8f;
+        case LocationType::Pub:     return 1.8f;
         case LocationType::Market:  return 1.5f;
         case LocationType::Square:  return 1.2f;
         case LocationType::Church:  return 0.3f;

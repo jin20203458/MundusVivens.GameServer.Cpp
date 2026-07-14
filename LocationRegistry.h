@@ -11,7 +11,7 @@
 struct LocationMeta {
     float x = 0.0f;
     float z = 0.0f;
-    LocationType type = LocationType::Unspecified;// 거점 유형 (Tavern, Square 등)
+    LocationType type = LocationType::Unspecified;// 거점 유형 (Pub, Square 등)
     uint32_t region_id = 0;      // 대륙/국가 등의 상위 구역 ID
     uint32_t territory_id = 0;   // 영토 단위의 중위 구역 ID
 };

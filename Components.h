@@ -30,7 +30,7 @@ struct RelationshipCacheComp {
 };
 
 enum class LocationType : uint8_t {
-    Unspecified = 0, Tavern, Market, Square,
+    Unspecified = 0, Pub, Market, Square,
     Church, Wilderness, Residential, Forge, Manor,
     Country, City, Place
 };
