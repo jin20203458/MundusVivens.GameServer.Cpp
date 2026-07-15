@@ -21,7 +21,7 @@ Focus: 20Hz lock-free simulation main loop, EnTT ECS, and asynchronous networkin
 </critical_rules>
 
 <context_triggers>
-- **Knowledge Base**: If modifying architecture, read `../Obsidian.Agent/MundusVivens/docs/01_architecture.md`.
+- **Knowledge Base**: If modifying architecture, read `../Obsidian.Agent/MundusVivens/docs/01_game_server_architecture.md`.
 - **Troubleshooting**: If debugging, read `../Obsidian.Agent/troubleshooting/mundus_vivens.md` before coding.
 </context_triggers>
 
