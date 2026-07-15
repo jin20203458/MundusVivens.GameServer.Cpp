@@ -11,6 +11,7 @@ Project Mundus Vivens의 고성능 C++ 게임 서버 시뮬레이터입니다. �
 - [02_agent_design.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/02_agent_design.md): C# 인지 파이프라인 (LLM, 기억, 대화)
 - [03_future_roadmap.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/03_future_roadmap.md): 향후 구현 로드맵
 - [04_cpp_server_profiling.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/04_cpp_server_profiling.md): Tracy 프로파일러 연동 및 4대 벤치마크 검증 보고서
+- [05_csharp_ai_profiling.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/05_csharp_ai_profiling.md): C# AI 대뇌 서버 아키텍처 효율성 및 비용 정량 비교 보고서
 
 > **참고**: 전체 시스템 구성도 및 흐름도는 중복을 방지하기 위해 [00_project_overview.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/00_project_overview.md)에서만 제공합니다.
 
