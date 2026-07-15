@@ -156,6 +156,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
     all_candidates_view.each([&](entt::entity ent, LocationComp&, ActivityComp&, IdentityComp&) {
         if (!reg.all_of<PlayerTag>(ent)) {
             if (reg.all_of<HealthComp>(ent) && reg.get<HealthComp>(ent).is_dead) return;
+            if (reg.all_of<SentienceComp>(ent) && !reg.get<SentienceComp>(ent).is_sentient) return; // 🆕 비지성체(몬스터/야수) 대화 불가
             all_npcs.push_back(ent);
         }
     });
@@ -189,6 +190,7 @@ void SystemSocialInteraction(entt::registry& reg, LocationRegistry& grid, TcpSer
             if (reg.all_of<BusyTag>(neighbor)) continue;
             if (reg.all_of<CombatComp>(neighbor) && reg.get<CombatComp>(neighbor).target_entity != entt::null) continue;
             if (reg.all_of<HealthComp>(neighbor) && reg.get<HealthComp>(neighbor).is_dead) continue;
+            if (reg.all_of<SentienceComp>(neighbor) && !reg.get<SentienceComp>(neighbor).is_sentient) continue; // 🆕 비지성체(몬스터/야수) 타겟 제외
             if (!reg.all_of<ActivityComp>(neighbor)) continue;
 
             const auto& n_cooldown = reg.get_or_emplace<CooldownComp>(neighbor);
