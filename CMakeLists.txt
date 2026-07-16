@@ -113,9 +113,7 @@ set(SERVER_SOURCES
     ${GEN_GRPC_HDR}
 )
 
-if(ENABLE_PROFILING)
-    list(APPEND SERVER_SOURCES TracyClient.cpp)
-endif()
+
 
 add_executable(MundusVivensGameServer ${SERVER_SOURCES})
 
@@ -124,12 +122,7 @@ target_include_directories(MundusVivensGameServer PRIVATE
     ${GEN_SRC_DIR}
 )
 
-if(ENABLE_PROFILING)
-    target_include_directories(MundusVivensGameServer PRIVATE
-        $<TARGET_PROPERTY:Tracy::TracyClient,INTERFACE_INCLUDE_DIRECTORIES>
-        "C:/Users/adg01/vcpkg/buildtrees/tracy/src/v0.13.1-f213d4969a.clean/public"
-    )
-endif()
+
 
 # Link gRPC and Protobuf libraries
 target_link_libraries(MundusVivensGameServer PRIVATE
@@ -140,3 +133,9 @@ target_link_libraries(MundusVivensGameServer PRIVATE
     asio-grpc::asio-grpc
     nlohmann_json::nlohmann_json
 )
+
+if(ENABLE_PROFILING)
+    # vcpkg의 사전 컴파일 라이브러리(TracyClient.lib) 링크를 피하고 컴파일 매크로(TRACY_ON_DEMAND 등)를 
+    # Tracy 코드 내부에 온전히 적용하기 위해, 로컬 TracyClient.cpp를 직접 프로젝트와 함께 빌드합니다.
+    target_sources(MundusVivensGameServer PRIVATE TracyClient.cpp)
+endif()
