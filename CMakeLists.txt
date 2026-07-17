@@ -1,12 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
 
-# vcpkg가 설치된 경로를 자동으로 감지하여 툴체인 파일 지정
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    if(DEFINED ENV{USERPROFILE} AND EXISTS "$ENV{USERPROFILE}/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{USERPROFILE}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
-    endif()
-endif()
-
 project(MundusVivensGameServer CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -20,7 +13,6 @@ find_package(nlohmann_json CONFIG REQUIRED)
 option(ENABLE_PROFILING "Enable Tracy Profiler" ON)
 if(ENABLE_PROFILING)
     find_package(Tracy CONFIG REQUIRED)
-    add_compile_definitions(TRACY_ENABLE TRACY_ON_DEMAND TRACY_NO_BROADCAST)
 endif()
 
 
@@ -136,6 +128,11 @@ target_link_libraries(MundusVivensGameServer PRIVATE
 
 if(ENABLE_PROFILING)
     # vcpkg의 사전 컴파일 라이브러리(TracyClient.lib) 링크를 피하고 컴파일 매크로(TRACY_ON_DEMAND 등)를 
-    # Tracy 코드 내부에 온전히 적용하기 위해, 로컬 TracyClient.cpp를 직접 프로젝트와 함께 빌드합니다.
-    target_sources(MundusVivensGameServer PRIVATE TracyClient.cpp)
+    # Tracy 코드 내부에 온전히 적용하기 위해, 로컬에 임포트된 thirdparty/tracy/TracyClient.cpp를 직접 프로젝트와 함께 빌드합니다.
+    target_sources(MundusVivensGameServer PRIVATE thirdparty/tracy/TracyClient.cpp)
+    target_include_directories(MundusVivensGameServer PRIVATE 
+        $<TARGET_PROPERTY:Tracy::TracyClient,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tracy
+    )
+    target_compile_definitions(MundusVivensGameServer PRIVATE TRACY_ENABLE TRACY_ON_DEMAND TRACY_NO_BROADCAST)
 endif()

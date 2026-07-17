@@ -73,9 +73,9 @@ cd out/build/windows-default
 
 ---
 
-## 트러블슈팅 및 환경설정 (vcpkg Path)
+## 환경설정 및 트러블슈팅 (vcpkg Path & Environment)
 
-* **vcpkg 자동 감지 실패 시**: 
-  vcpkg가 기본 홈 디렉토리(`%USERPROFILE%/vcpkg`)가 아닌 다른 경로에 설치되어 있을 경우, CMake 구성 시 `-DCMAKE_TOOLCHAIN_FILE=[vcpkg설치경로]/scripts/buildsystems/vcpkg.cmake` 옵션을 명시적으로 지정해 주거나 환경 변수 `VCPKG_ROOT`를 설정하십시오.
-* **Powershell 스크립트 실행 불가 시**: 
-  스크립트 실행 정책 제한 시, 관리자 권한 터미널에서 `Set-ExecutionPolicy RemoteSigned` 명령을 실행하거나 README에 안내된 `Bypass` 매개변수를 사용해 주십시오.
+* **vcpkg 설치 경로 변경 방법**: 
+  vcpkg가 기본 사용자 홈 디렉토리(`%USERPROFILE%/vcpkg`)가 아닌 다른 경로에 설치되어 있을 경우, [CMakePresets.json](CMakePresets.json) 파일의 `cacheVariables.CMAKE_TOOLCHAIN_FILE` 값을 본인의 실제 vcpkg 설치 경로에 맞게 직접 수정하여 연동하십시오.
+* **Powershell 스크립트 실행 제한**: 
+  스크립트 실행 정책 제한으로 인해 빌드 스크립트 실행이 불가능할 경우, 관리자 권한 터미널에서 `Set-ExecutionPolicy RemoteSigned` 명령을 실행하거나 README에 안내된 `Bypass` 권한 실행 정책 우회 매개변수(`-ExecutionPolicy Bypass`)를 사용해 실행해 주십시오.
