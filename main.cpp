@@ -29,6 +29,12 @@
 #include "GrpcResultQueue.h"
 #include "Benchmark.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#include <timeapi.h>
+#endif
+
 
 // MSVC STL workaround stubs moved to MSVCCompat.cpp
 
@@ -80,6 +86,17 @@ void SystemDeath(entt::registry& reg) {
     });
 }
 
+#ifdef _WIN32
+struct WindowsTimerResolutionRaii {
+    WindowsTimerResolutionRaii() {
+        timeBeginPeriod(1);
+    }
+    ~WindowsTimerResolutionRaii() {
+        timeEndPeriod(1);
+    }
+};
+#endif
+
 int main(int argc, char* argv[]) {
     if (MundusVivens::RunBenchmarkIfRequested(argc, argv)) {
         return 0;
@@ -88,6 +105,8 @@ int main(int argc, char* argv[]) {
 #ifdef _WIN32
     // Windows 환경의 콘솔창에서 한글 깨짐을 방지하기 위한 UTF-8(코드페이지 65001) 설정
     system("chcp 65001 > nul");
+    // Windows 타이머 해상도를 1ms로 조율하여 50ms(20Hz) 물리 틱 주기 정밀도 방해 예방
+    WindowsTimerResolutionRaii timer_resolution_guard;
 #endif
 
     // 종료 시그널 등록

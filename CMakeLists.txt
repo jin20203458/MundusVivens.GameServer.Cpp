@@ -126,6 +126,10 @@ target_link_libraries(MundusVivensGameServer PRIVATE
     nlohmann_json::nlohmann_json
 )
 
+if(WIN32)
+    target_link_libraries(MundusVivensGameServer PRIVATE winmm)
+endif()
+
 if(ENABLE_PROFILING)
     # vcpkg의 사전 컴파일 라이브러리(TracyClient.lib) 링크를 피하고 컴파일 매크로(TRACY_ON_DEMAND 등)를 
     # Tracy 코드 내부에 온전히 적용하기 위해, 로컬에 임포트된 thirdparty/tracy/TracyClient.cpp를 직접 프로젝트와 함께 빌드합니다.
