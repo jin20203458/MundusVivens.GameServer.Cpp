@@ -108,32 +108,34 @@ struct AStarNode {
     }
 };
 
-std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float end_x, float end_z) const {
+PathResult GridMap::FindPath(float start_x, float start_z, float end_x, float end_z, int max_iterations) const {
     int sx = std::clamp(static_cast<int>(std::round(start_x)), 0, WIDTH - 1);
     int sz = std::clamp(static_cast<int>(std::round(start_z)), 0, HEIGHT - 1);
     int ex = std::clamp(static_cast<int>(std::round(end_x)), 0, WIDTH - 1);
     int ez = std::clamp(static_cast<int>(std::round(end_z)), 0, HEIGHT - 1);
 
-    std::vector<GridVector2> path;
+    PathResult result;
 
     // 예외: 시작 지점과 목표 지점이 같은 타일인 경우
     if (sx == ex && sz == ez) {
-        path.push_back({static_cast<float>(ex), static_cast<float>(ez)});
-        return path;
+        result.waypoints.push_back({static_cast<float>(ex), static_cast<float>(ez)});
+        return result;
     }
 
     // 목표 지점이 갈 수 없는 곳인 경우 바로 리턴
     if (!IsWalkable(ex, ez)) {
-        std::cerr << "⚠️ [A* 길찾기 실패] 목표지점 타일이 갈 수 없는 곳(장애물)입니다. 목적지: (" << ex << ", " << ez << ")" << std::endl;
-        std::cerr << "📌 [주변 타일 상태]:" << std::endl;
-        for (int nz = ez + 1; nz >= ez - 1; --nz) {
-            for (int nx = ex - 1; nx <= ex + 1; ++nx) {
-                if (nx == ex && nz == ez) std::cerr << " [X]"; // target
-                else std::cerr << " [" << (IsWalkable(nx, nz) ? "O" : "W") << "]";
-            }
-            std::cerr << std::endl;
-        }
-        return path;
+        result.is_failed = true;
+        return result;
+    }
+
+    // Phase 3: Destination Cluster Cache 확인 (8x8 타일 버킷)
+    PathCacheKey cache_key{ sx / 8, sz / 8, ex / 8, ez / 8 };
+    auto cache_it = path_cache_.find(cache_key);
+    if (cache_it != path_cache_.end() && !cache_it->second.waypoints.empty()) {
+        result.waypoints = cache_it->second.waypoints;
+        result.is_partial = false;
+        result.is_failed = false;
+        return result;
     }
 
     // A* 알고리즘 데이터 구조
@@ -169,17 +171,39 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
     const float move_cost[] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.41421356f, 1.41421356f, 1.41421356f, 1.41421356f };
 
     bool found = false;
+    bool hit_cap = false;
+    int iterations = 0;
+
+    // Best-so-far 추적 (Cap 도달 시 폴백용)
+    int best_x = sx;
+    int best_z = sz;
+    float best_h = h_start;
 
     while (!open_set.empty()) {
+        if (++iterations > max_iterations) {
+            hit_cap = true;
+            break;
+        }
+
         auto curr = open_set.top();
         open_set.pop();
 
         if (curr.x == ex && curr.z == ez) {
             found = true;
+            best_x = curr.x;
+            best_z = curr.z;
             break;
         }
 
         if (curr.g > g_score[curr.x * HEIGHT + curr.z]) continue;
+
+        // Best-so-far 갱신
+        float curr_h = heuristic(curr.x, curr.z, ex, ez);
+        if (curr_h < best_h) {
+            best_h = curr_h;
+            best_x = curr.x;
+            best_z = curr.z;
+        }
 
         for (int i = 0; i < 8; ++i) {
             int nx = curr.x + dx[i];
@@ -207,25 +231,38 @@ std::vector<GridVector2> GridMap::FindPath(float start_x, float start_z, float e
         }
     }
 
-    if (found) {
-        int cx = ex;
-        int cz = ez;
-        std::vector<GridVector2> rev_path;
-        while (cx != -1 && cz != -1) {
-            rev_path.push_back({static_cast<float>(cx), static_cast<float>(cz)});
-            auto p = parent[cx * HEIGHT + cz];
-            cx = p.first;
-            cz = p.second;
-        }
-        std::reverse(rev_path.begin(), rev_path.end());
-        path = std::move(rev_path);
-    } else {
-        std::cerr << "⚠️ [A* 길찾기 실패] 시작지점에서 목적지로 도달하는 경로가 존재하지 않습니다." << std::endl;
-        std::cerr << "   - 시작: (" << sx << ", " << sz << ") [Walkable: " << (IsWalkable(sx, sz) ? "Yes" : "No") << "]" << std::endl;
-        std::cerr << "   - 목적: (" << ex << ", " << ez << ") [Walkable: " << (IsWalkable(ex, ez) ? "Yes" : "No") << "]" << std::endl;
+    int trace_x = found ? ex : best_x;
+    int trace_z = found ? ez : best_z;
+
+    // 전혀 전진하지 못한 경우 (시작 지점과 동일)
+    if (trace_x == sx && trace_z == sz) {
+        result.is_failed = true;
+        return result;
     }
 
-    return path;
+    std::vector<GridVector2> rev_path;
+    int cx = trace_x;
+    int cz = trace_z;
+    while (cx != -1 && cz != -1) {
+        rev_path.push_back({static_cast<float>(cx), static_cast<float>(cz)});
+        auto p = parent[cx * HEIGHT + cz];
+        cx = p.first;
+        cz = p.second;
+    }
+    std::reverse(rev_path.begin(), rev_path.end());
+    result.waypoints = std::move(rev_path);
+    result.is_partial = hit_cap && !found;
+    result.is_failed = false;
+
+    // Phase 3: 완결 경로에 대해 Destination Cluster Cache에 저장 (최대 500개 유지)
+    if (found && !result.waypoints.empty()) {
+        if (path_cache_.size() > 500) {
+            path_cache_.clear();
+        }
+        path_cache_[cache_key] = PathCacheEntry{ result.waypoints, 0 };
+    }
+
+    return result;
 }
 
 bool GridMap::IsPathBlocked(float x1, float z1, float x2, float z2) const {

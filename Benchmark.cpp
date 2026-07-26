@@ -269,6 +269,12 @@ namespace MundusVivens {
             std::mt19937 gen(rd());
             std::uniform_real_distribution<float> dis(0.0f, 1999.0f);
 
+            int total_success = 0;
+            int total_partial = 0;
+            int total_failed = 0;
+
+            map.ClearCache(); // 스케일별 벤치 시작 전 캐시 초기화
+
             auto start = std::chrono::high_resolution_clock::now();
             for (int step = 0; step < PATHFINDING_TRIALS; ++step) {
                 ZoneScopedN("A* Batch Process");
@@ -277,14 +283,18 @@ namespace MundusVivens {
                     float sz = dis(gen);
                     float ex = dis(gen);
                     float ez = dis(gen);
-                    auto path = map.FindPath(sx, sz, ex, ez);
+                    auto res = map.FindPath(sx, sz, ex, ez);
+                    if (res.is_failed) total_failed++;
+                    else if (res.is_partial) total_partial++;
+                    else total_success++;
                 }
             }
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 
             std::cout << "- 에이전트 " << count << "명 동시 다발 길찾기 루프 (" << PATHFINDING_TRIALS << "회) 소요 시간: " 
-                      << duration << " ms (틱당 평균: " << (double)duration / PATHFINDING_TRIALS << " ms)" << std::endl;
+                      << duration << " ms (틱당 평균: " << (double)duration / PATHFINDING_TRIALS << " ms) [완결: "
+                      << total_success << ", 부분(Cap): " << total_partial << ", 실패: " << total_failed << "]" << std::endl;
         }
     }
 
