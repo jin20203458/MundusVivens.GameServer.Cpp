@@ -84,6 +84,10 @@ struct PathfindingComp {
     size_t current_waypoint_index = 0;    // 현재 목표 웨이포인트 인덱스
     float last_target_x = 0.0f;           // 마지막으로 길찾기를 수행한 목적지 x
     float last_target_z = 0.0f;           // 마지막으로 길찾기를 수행한 목적지 z
+    bool is_partial = false;              // 부분 경로 여부 (Iteration Cap 초과 시 true)
+    int cap_retry_count = 0;               // 연속 제자리 Cap 발생 횟수 (Unreachable Guard용)
+    float last_cap_pos_x = 0.0f;          // Cap 발생 시점 위치 x
+    float last_cap_pos_z = 0.0f;          // Cap 발생 시점 위치 z
 };
 
 

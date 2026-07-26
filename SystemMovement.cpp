@@ -7,6 +7,9 @@
 // A* 길찾기 적용 시스템
 void SystemPathfinding(entt::registry& reg, const GridMap& map) {
     ZoneScoped;
+    constexpr int MAX_PATHFINDS_PER_TICK = 8;
+    int pathfinds_this_tick = 0;
+
     auto view = reg.view<JobComp, ToilComp, LocationComp>();
     view.each([&](entt::entity entity, JobComp& job, ToilComp& toil, LocationComp& loc) {
         if (toil.state == ToilState::Moving) {
@@ -41,6 +44,8 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
                 pathfinding.current_waypoint_index = 0;
                 pathfinding.last_target_x = target_x;
                 pathfinding.last_target_z = target_z;
+                pathfinding.is_partial = false;
+                pathfinding.cap_retry_count = 0;
 
                 auto& vel = reg.get_or_emplace<VelocityComp>(entity);
                 float move_speed = 2.0f;
@@ -51,25 +56,59 @@ void SystemPathfinding(entt::registry& reg, const GridMap& map) {
             } else {
                 // 시야가 막혀있는데 경로가 비어있다면 A* 수행
                 if (pathfinding.waypoints.empty()) {
-                    pathfinding.waypoints = map.FindPath(loc.x, loc.z, target_x, target_z);
-                    pathfinding.current_waypoint_index = 0;
+                    // Phase 2: Tick Budget Staggering (틱당 최대 A* 실행 제한)
+                    if (pathfinds_this_tick >= MAX_PATHFINDS_PER_TICK) {
+                        return; // 이번 틱 예산 소진 -> 다음 틱으로 이연
+                    }
+
+                    PathResult res = map.FindPath(loc.x, loc.z, target_x, target_z);
+                    pathfinds_this_tick++;
+
                     pathfinding.last_target_x = target_x;
                     pathfinding.last_target_z = target_z;
 
-                    if (!pathfinding.waypoints.empty()) {
+                    if (!res.is_failed && !res.waypoints.empty()) {
+                        pathfinding.waypoints = std::move(res.waypoints);
+                        pathfinding.current_waypoint_index = 0;
+                        pathfinding.is_partial = res.is_partial;
+
+                        // Unreachable Retry Guard Check (부분 경로 연속 제자리 발생 시 틱 스파이크 억제)
+                        if (res.is_partial) {
+                            float moved = std::sqrt((loc.x - pathfinding.last_cap_pos_x) * (loc.x - pathfinding.last_cap_pos_x) + 
+                                                    (loc.z - pathfinding.last_cap_pos_z) * (loc.z - pathfinding.last_cap_pos_z));
+                            if (moved < 1.0f) {
+                                pathfinding.cap_retry_count++;
+                            } else {
+                                pathfinding.cap_retry_count = 0;
+                            }
+                            pathfinding.last_cap_pos_x = loc.x;
+                            pathfinding.last_cap_pos_z = loc.z;
+
+                            if (pathfinding.cap_retry_count >= 2) {
+                                // 2회 연속 제자리 Cap 발생 -> 도달 불능 처리 및 Idle 이탈
+                                toil.state = ToilState::Idle;
+                                pathfinding.waypoints.clear();
+                                pathfinding.cap_retry_count = 0;
+                                if (reg.all_of<VelocityComp>(entity)) {
+                                    auto& vel = reg.get<VelocityComp>(entity);
+                                    vel.dir_x = 0.0f; vel.dir_z = 0.0f; vel.speed = 0.0f;
+                                }
+                                return;
+                            }
+                        } else {
+                            pathfinding.cap_retry_count = 0;
+                        }
+
                         auto& vel = reg.get_or_emplace<VelocityComp>(entity);
                         float move_speed = 2.0f;
                         if (reg.ctx().contains<SimulationSettings>()) {
                             move_speed = reg.ctx().get<SimulationSettings>().npc_speed;
                         }
                         vel.speed = move_speed;
-                        
-                        // if (auto* ident = reg.try_get<IdentityComp>(entity)) {
-                        //     std::cout << "🧭 [경로 생성] " << ident->display_name << "이(가) [" << job.target_location << "] (" << target_x << ", " << target_z << ")로의 경로를 A*로 탐색하여 " << pathfinding.waypoints.size() << "개의 노드를 찾았습니다." << std::endl;
-                        // }
                     } else {
-                        // 경로 탐색 실패 또는 이미 도달함 -> 대기 상태 전환
+                        // 경로 탐색 실패 또는 도달 불능 -> 대기 상태 전환
                         toil.state = ToilState::Idle;
+                        pathfinding.waypoints.clear();
                         if (reg.all_of<VelocityComp>(entity)) {
                             auto& vel = reg.get<VelocityComp>(entity);
                             vel.dir_x = 0.0f;
@@ -116,6 +155,8 @@ void SystemMovement(entt::registry& reg, LocationRegistry& grid, const GridMap& 
                     vel.dir_z = 0.0f;
                     vel.speed = 0.0f;
                     path.current_waypoint_index = 0;
+                    path.is_partial = false;
+                    path.cap_retry_count = 0;
 
                     bool is_sentient = true;
                     if (reg.all_of<SentienceComp>(entity)) {
@@ -189,38 +230,48 @@ void SystemMovement(entt::registry& reg, LocationRegistry& grid, const GridMap& 
             // 2. A* 웨이포인트 경로 이동 모드일 때
             else {
                 if (path.current_waypoint_index >= path.waypoints.size()) {
-                    // 더 이상 갈 노드가 없음 -> 목적지 도착
-                    loc.x = job.target_x;
-                    loc.y = job.target_y;
-                    loc.z = job.target_z;
+                    float dist_to_final = std::sqrt((job.target_x - loc.x) * (job.target_x - loc.x) + (job.target_z - loc.z) * (job.target_z - loc.z));
+                    // 목적지 1.0m 이내 진짜 도달이거나 부분 경로가 아닌 완결 경로 소진인 경우
+                    if (dist_to_final < 1.0f || !path.is_partial) {
+                        loc.x = job.target_x;
+                        loc.y = job.target_y;
+                        loc.z = job.target_z;
 
-                    grid.UpdateEntityPosition(entity, loc.x, loc.z, reg);
+                        grid.UpdateEntityPosition(entity, loc.x, loc.z, reg);
 
-                    toil.state = ToilState::Working;
-                    toil.duration_ticks = 3;
-                    toil.current_action = job.intent;
-                    
-                    auto& act = reg.get<ActivityComp>(entity);
-                    act.current_activity = job.intent;
+                        toil.state = ToilState::Working;
+                        toil.duration_ticks = 3;
+                        toil.current_action = job.intent;
 
-                    vel.dir_x = 0.0f;
-                    vel.dir_z = 0.0f;
-                    vel.speed = 0.0f;
-                    path.waypoints.clear();
-                    path.current_waypoint_index = 0;
+                        auto& act = reg.get<ActivityComp>(entity);
+                        act.current_activity = job.intent;
 
-                    bool is_sentient = true;
-                    if (reg.all_of<SentienceComp>(entity)) {
-                        is_sentient = reg.get<SentienceComp>(entity).is_sentient;
+                        vel.dir_x = 0.0f;
+                        vel.dir_z = 0.0f;
+                        vel.speed = 0.0f;
+                        path.waypoints.clear();
+                        path.current_waypoint_index = 0;
+                        path.is_partial = false;
+                        path.cap_retry_count = 0;
+
+                        bool is_sentient = true;
+                        if (reg.all_of<SentienceComp>(entity)) {
+                            is_sentient = reg.get<SentienceComp>(entity).is_sentient;
+                        }
+                        std::string verb = is_sentient ? "작업" : "행동";
+
+                        std::cout << "🏁 [목적지 도착 - A* Path] " << identity.display_name
+                                  << "이(가) 목적지 [" << loc.location_name << "]에 도착하여 " << verb << "을(를) 시작합니다." << std::endl;
+                        std::cout << "🔄 [Toil Transition] " << identity.display_name
+                                  << ": Moving ➔ Working (A* 도달 완료, Job ID: " << job.job_id
+                                  << ", Intent: " << job.intent << ")" << std::endl;
+                        return;
+                    } else {
+                        // 부분 경로(Partial Path) 소진: 순간이동 방지 및 다음 구간 A* 연쇄 탐색을 위해 clear 후 Moving 유지
+                        path.waypoints.clear();
+                        path.current_waypoint_index = 0;
+                        return;
                     }
-                    std::string verb = is_sentient ? "작업" : "행동";
-                    
-                    std::cout << "🏁 [목적지 도착 - A* Path] " << identity.display_name 
-                              << "이(가) 목적지 [" << loc.location_name << "]에 도착하여 " << verb << "을(를) 시작합니다." << std::endl;
-                    std::cout << "🔄 [Toil Transition] " << identity.display_name 
-                              << ": Moving ➔ Working (A* 도달 완료, Job ID: " << job.job_id 
-                              << ", Intent: " << job.intent << ")" << std::endl;
-                    return;
                 }
 
                 const auto& target = path.waypoints[path.current_waypoint_index];
