@@ -10,7 +10,6 @@ Project Mundus Vivens의 고성능 C++ 게임 서버 시뮬레이터입니다. �
 - [01_game_server_architecture.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/01_game_server_architecture.md): C++ 물리 엔진 아키텍처 (ECS, 스레드 모델)
 - [02_agent_design.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/02_agent_design.md): C# 인지 파이프라인 (LLM, 기억, 대화)
 - [03_future_roadmap.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/03_future_roadmap.md): 향후 구현 로드맵
-- [clang-tidy-custom-module](https://github.com/jin20203458/clang-tidy-custom-module): ECS 스레드 안전성 및 댕글링 포인터 컴파일 타임 차단 커스텀 린터
 - [04_cpp_server_profiling.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/04_cpp_server_profiling.md): Tracy 프로파일러 연동 및 4대 벤치마크 검증 보고서
 - [05_csharp_ai_profiling.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/05_csharp_ai_profiling.md): C# AI 대뇌 서버 아키텍처 효율성 및 비용 정량 비교 보고서
 
