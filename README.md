@@ -10,9 +10,10 @@ Project Mundus Vivens의 고성능 C++ 게임 서버 시뮬레이터입니다. �
 - [01_game_server_architecture.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/01_game_server_architecture.md): C++ 물리 엔진 아키텍처 (ECS, 스레드 모델)
 - [02_agent_design.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/02_agent_design.md): C# 인지 파이프라인 (LLM, 기억, 대화)
 - [03_future_roadmap.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/03_future_roadmap.md): 향후 구현 로드맵
+- [clang-tidy-custom-module](https://github.com/jin20203458/clang-tidy-custom-module): ECS 스레드 안전성 및 댕글링 포인터 컴파일 타임 차단 커스텀 린터
 - [04_cpp_server_profiling.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/04_cpp_server_profiling.md): Tracy 프로파일러 연동 및 4대 벤치마크 검증 보고서
 - [05_csharp_ai_profiling.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/05_csharp_ai_profiling.md): C# AI 대뇌 서버 아키텍처 효율성 및 비용 정량 비교 보고서
- 
+
 > **참고**: 전체 시스템 구성도 및 흐름도는 중복을 방지하기 위해 [00_project_overview.md](https://github.com/jin20203458/Obsidian.Agent/blob/main/MundusVivens/docs/00_project_overview.md)에서만 제공합니다.
 
 ## 주요 기능
@@ -20,6 +21,7 @@ Project Mundus Vivens의 고성능 C++ 게임 서버 시뮬레이터입니다. �
 - **3-스레드 프로액터 모델**: 데이터 레이스를 완전히 격리하기 위해 I/O, 메인 게임루프(20Hz), gRPC 통신 스레드를 엄격히 분리하고, 더블 버퍼드 Swap 동기화 큐를 활용해 메인 스레드의 락 경합 지연을 최소화합니다.
 - **ECS (Entity Component System)**: EnTT 라이브러리를 활용하여 NPC의 상태, 공간 해시 그리드 기반의 최적화된 거리 연산을 순차 조밀 배열 상에서 캐시 친화적으로 수행합니다.
 - **공간 기반 대화 트리거**: 물리적 거리와 기존 관계 수치를 바탕으로 대화 주도, 수락 및 제일차 합류 확률을 수학적으로 계산하여 대화 이벤트를 발생시킵니다.
+- **컴파일 타임 아키텍처 가드**: LLVM/Clang AST 기반 [커스텀 린터](https://github.com/jin20203458/clang-tidy-custom-module)를 개발하여, 비동기 스레드의 ECS 직접 접근 및 컴포넌트 내 생 포인터 사용을 빌드 단계에서 원천 차단합니다.
 
 ## 빌드 및 실행
 
