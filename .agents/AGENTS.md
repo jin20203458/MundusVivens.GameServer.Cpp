@@ -15,8 +15,8 @@ Focus: 20Hz lock-free simulation main loop, EnTT cache-coherent DOD, thread boun
 </critical_rules>
 
 <context_triggers>
-- **Knowledge Base**: If modifying architecture, read `../Obsidian.Agent/MundusVivens/docs/01_game_server_architecture.md`.
-- **Troubleshooting**: If debugging, read `../Obsidian.Agent/troubleshooting/mundus_vivens.md` before coding.
+- **Server Architecture**: 20Hz loop, EnTT ECS, gRPC streaming, thread isolation -> `../Obsidian.Agent/MundusVivens/docs/01_game_server_architecture.md`
+- **Troubleshooting**: Concurrency bugs, crash post-mortems, runbook -> `../Obsidian.Agent/troubleshooting/mundus_vivens.md`
 </context_triggers>
 
 <post_action>
