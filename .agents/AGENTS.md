@@ -6,7 +6,7 @@ Focus: 20Hz lock-free simulation main loop, EnTT cache-coherent DOD, thread boun
 - **Thread Safety**: gRPC/IO threads MUST NOT directly modify `entt::registry`. Main Thread exclusively owns EnTT registry write access; cross-thread tasks must be pushed to Main Thread via queue.
 - **Memory**: Prefer smart pointers for resource ownership. Use raw pointers only when technically required (e.g., non-owning observers, POD buffers).
 - **ECS**: State in components, logic in systems. NO OOP inheritance for entities.
-- **Formatting**: Strictly follow the target file's style.
+- **Formatting**: Strictly follow the target file's style; zero decorative emojis.
 </engineering_rules>
 
 <critical_rules>
